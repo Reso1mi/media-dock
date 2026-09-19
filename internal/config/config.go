@@ -2,12 +2,16 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	HTTPAddr string
+	HTTPAddr     string
+	MCPEnabled   bool
+	MCPPath      string
+	MCPAuthToken string
 
 	PansouBaseURL   string
 	ProwlarrBaseURL string
@@ -26,6 +30,9 @@ type Config struct {
 func FromEnv() Config {
 	return Config{
 		HTTPAddr:             env("HTTP_ADDR", ":8080"),
+		MCPEnabled:           boolEnv("MCP_ENABLED", true),
+		MCPPath:              normalizedPath(env("MCP_PATH", "/mcp")),
+		MCPAuthToken:         strings.TrimSpace(os.Getenv("MCP_AUTH_TOKEN")),
 		PansouBaseURL:        env("PANSOU_BASE_URL", ""),
 		ProwlarrBaseURL:      env("PROWLARR_BASE_URL", ""),
 		ProwlarrAPIKey:       env("PROWLARR_API_KEY", ""),
@@ -37,6 +44,18 @@ func FromEnv() Config {
 		SearchTimeout:        durationEnv("SEARCH_TIMEOUT", 30*time.Second),
 		SearchTTL:            durationEnv("SEARCH_SESSION_TTL", 30*time.Minute),
 	}
+}
+
+func normalizedPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "/mcp"
+	}
+	value = "/" + strings.Trim(value, "/")
+	if value == "/" {
+		return "/mcp"
+	}
+	return value
 }
 
 func listEnv(key string) []string {
@@ -74,6 +93,18 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func boolEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return fallback
 	}

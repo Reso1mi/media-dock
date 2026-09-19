@@ -11,6 +11,7 @@ import (
 
 	"nas-bot/internal/acquisition"
 	"nas-bot/internal/domain"
+	"nas-bot/internal/llm"
 	"nas-bot/internal/search"
 	"nas-bot/internal/store"
 )
@@ -75,8 +76,23 @@ func TestToolsEndpointReturnsLLMDefinitions(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("tools returned %d", response.Code)
 	}
-	if !bytes.Contains(response.Body.Bytes(), []byte("media_search")) || !bytes.Contains(response.Body.Bytes(), []byte("media_acquire")) {
-		t.Fatalf("expected LLM tool definitions: %s", response.Body.String())
+	var payload struct {
+		Tools []llm.ToolDefinition `json:"tools"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode tool definitions: %v", err)
+	}
+	if len(payload.Tools) != 5 {
+		t.Fatalf("tool definition count = %d, want 5", len(payload.Tools))
+	}
+	seen := make(map[string]bool, len(payload.Tools))
+	for _, tool := range payload.Tools {
+		seen[tool.Function.Name] = true
+	}
+	for _, name := range []string{"media_search", "media_acquire", "media_job_status", "media_job_cancel", "media_capabilities"} {
+		if !seen[name] {
+			t.Errorf("missing tool definition %q", name)
+		}
 	}
 }
 

@@ -9,6 +9,7 @@ Media Scout 的核心目标是让 LLM 能安全地完成：
 ```
 
 第一版只聚焦搜索平台、候选资源模型、确认门和下载器对接。NAStool 和 mediary-scout 是设计参考，不是运行时依赖。
+对 LLM 暴露的主协议是官方 MCP Streamable HTTP；REST API 作为管理、调试和旧客户端兼容层保留。
 
 ## 分层
 
@@ -17,9 +18,10 @@ Media Scout 的核心目标是让 LLM 能安全地完成：
 │ Hermes / Web / Bot / LLM                     │
 │ 解析需求、展示候选、获得确认、查询进度        │
 └──────────────────────┬───────────────────────┘
-                       │ JSON API / LLM tools
+                       │ MCP Streamable HTTP / REST
 ┌──────────────────────▼───────────────────────┐
-│ HTTP API + Application Services               │
+│ Protocol Adapters + Application Services      │
+│ MCP JSON-RPC / REST / 管理接口                │
 │ SearchService / AcquisitionService / 状态门    │
 └───────────────┬─────────────────┬─────────────┘
                 │                 │
@@ -39,6 +41,25 @@ Media Scout 的核心目标是让 LLM 能安全地完成：
                          │
                       Jellyfin
 ```
+
+## MCP 协议边界
+
+服务端使用 `github.com/modelcontextprotocol/go-sdk` 提供标准 MCP Server，端点默认为 `/mcp`，采用 Streamable HTTP 传输。MCP 客户端通过标准生命周期完成：
+
+```text
+initialize → notifications/initialized → tools/list → tools/call
+```
+
+工具调用最终进入同一套 `SearchService` 和 `AcquisitionService`，因此 MCP 与 REST 不会形成两套业务规则。当前工具为：
+
+- `media_search`：并行调用已配置的搜索 provider，返回不含原始链接的候选句柄；
+- `media_acquire`：只接受候选 ID，并要求 `confirmed=true`；
+- `media_job_status` / `media_job_cancel`：查询或取消获取任务；
+- `media_capabilities`：发现当前 provider/downloader 能力。
+
+`GET /api/v1/llm/tools` 仅返回 OpenAI 风格函数定义，用于兼容旧客户端，不替代 MCP。MCP 的工具 schema、结构化输出和错误结果由官方 SDK 负责序列化。
+
+MCP 输出刻意不包含 `RawURL`、分享密码、provider 原始 payload、下载器远程 ID 或临时目录。候选句柄只在服务端 Store 中解析，LLM 无法构造任意下载地址或目标路径。
 
 ## 搜索模型
 
@@ -146,11 +167,13 @@ downloaded
   → completed
 ```
 
-每个状态都应由后台任务持久化，不能依赖聊天记录。
+每个状态都应由后台任务持久化，不能依赖聊天记录。MCP 会话只是调用入口，不承载业务状态；任务和候选必须由 Store 管理。
 
 ## 安全和可靠性要求
 
 - 下载必须经过显式确认；
+- MCP 端点生产环境必须使用 Bearer Token 或可信反向代理认证；
+- Streamable HTTP 服务不能设置会截断长期 SSE 响应的全局写超时；
 - 下载器只接受白名单候选类型；
 - 临时目录和正式媒体库隔离；
 - 不允许 LLM 直接传入任意目标路径；

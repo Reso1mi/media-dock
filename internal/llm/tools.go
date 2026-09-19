@@ -72,5 +72,16 @@ func Definitions() []ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionSchema{
+				Name:        "media_capabilities",
+				Description: "查看当前已配置的搜索平台、下载器和确认要求。",
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"nas-bot/internal/acquisition"
 	"nas-bot/internal/config"
 	"nas-bot/internal/httpapi"
+	"nas-bot/internal/mcpserver"
 	"nas-bot/internal/search"
 	"nas-bot/internal/store"
 )
@@ -46,20 +47,31 @@ func main() {
 		}
 	}
 	acquisitionService := acquisition.NewService(memoryStore, downloaders, cfg.IncomingDir)
+
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/", httpapi.NewServer(searchService, acquisitionService, logger).Handler())
+	if cfg.MCPEnabled {
+		mcpHandler := mcpserver.NewHTTPHandler(mcpserver.NewServer(searchService, acquisitionService))
+		rootMux.Handle(cfg.MCPPath, mcpserver.BearerAuth(mcpHandler, cfg.MCPAuthToken))
+		if cfg.MCPAuthToken == "" {
+			logger.Printf("warning: MCP endpoint %s has no bearer token; protect it with a private network or reverse proxy", cfg.MCPPath)
+		}
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewServer(searchService, acquisitionService, logger).Handler(),
+		Handler:           rootMux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// Do not set WriteTimeout: Streamable HTTP may keep an SSE response open
+		// for the lifetime of an MCP session.
+		IdleTimeout: 60 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	go func() {
-		logger.Printf("listening on %s; search providers=%v; downloaders=%v", cfg.HTTPAddr, searchService.ProviderNames(), acquisitionService.DownloaderNames())
+		logger.Printf("listening on %s; search providers=%v; downloaders=%v; mcp=%v", cfg.HTTPAddr, searchService.ProviderNames(), acquisitionService.DownloaderNames(), cfg.MCPEnabled)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("HTTP server failed: %v", err)
 		}

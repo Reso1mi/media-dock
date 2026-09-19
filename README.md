@@ -16,15 +16,17 @@
 
 ## 当前已实现
 
-- Go 1.22 模块化单体服务；
+- Go 1.23 模块化单体服务；
 - PanSou 搜索适配器（`POST /api/search`）；
 - Prowlarr 兼容索引器适配器（`GET /api/v1/search`）；
 - 候选资源统一模型、去重、质量/字幕/做种评分；
 - 候选资源句柄隔离：API 不返回原始分享链接、密码和 provider payload；
 - 用户确认门：没有 `confirmed: true` 不会创建获取任务；
 - 可配置的下载器适配器；当前包含 Transmission RPC，支持磁力和 torrent/HTTP 下载链接；
-- 面向 LLM 的 OpenAI 风格工具定义接口；
-- 基础测试和 Docker 镜像构建文件。
+- 标准 MCP Server：官方 Go SDK + Streamable HTTP，端点为 `/mcp`；
+- MCP 工具：`media_search`、`media_acquire`、`media_job_status`、`media_job_cancel`、`media_capabilities`；
+- 保留 OpenAI 风格工具定义接口，兼容暂未支持 MCP 的旧客户端；
+- 单元测试、官方 SDK 客户端协议测试和 Docker 镜像构建文件。
 
 当前搜索和任务状态使用内存存储，服务重启后会丢失搜索候选和任务记录。这是第一条垂直链路，下一步应替换为 SQLite 或 PostgreSQL。
 
@@ -46,6 +48,14 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/providers
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/downloaders
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/llm/tools
 ```
+
+标准 MCP 客户端连接：
+
+```text
+http://127.0.0.1:8080/mcp
+```
+
+如果配置了 `MCP_AUTH_TOKEN`，客户端需要发送 `Authorization: Bearer <token>`。MCP 客户端负责执行标准的 `initialize`、`tools/list` 和 `tools/call`，不需要再调用下面的 REST 工具定义接口。
 
 搜索：
 
@@ -86,6 +96,9 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/jobs/job_xxx
 
 | 变量 | 作用 |
 | --- | --- |
+| `MCP_ENABLED` | 是否启用标准 MCP Streamable HTTP 端点，默认 `true` |
+| `MCP_PATH` | MCP 端点路径，默认 `/mcp` |
+| `MCP_AUTH_TOKEN` | 可选 Bearer Token；生产环境建议配置，或由反向代理统一认证 |
 | `PANSOU_BASE_URL` | PanSou / pansou-web 地址 |
 | `PROWLARR_BASE_URL` | 可选，Prowlarr 地址 |
 | `PROWLARR_API_KEY` | Prowlarr API Key |
@@ -100,14 +113,27 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/jobs/job_xxx
 
 ## LLM 接口边界
 
-`GET /api/v1/llm/tools` 返回四个工具定义：
+首选接口是标准 MCP Streamable HTTP：
+
+```text
+POST /mcp
+GET /mcp
+DELETE /mcp
+```
+
+服务端使用官方 MCP Go SDK 管理会话和 JSON-RPC，不自定义 `tools/list` 或 `tools/call` 协议。MCP 暴露五个工具：
 
 - `media_search`：搜索资源，不下载；
 - `media_acquire`：用户确认后创建获取任务；
 - `media_job_status`：查询任务状态；
-- `media_job_cancel`：取消任务。
+- `media_job_cancel`：取消任务；
+- `media_capabilities`：查看已配置的搜索平台和下载器。
+
+`GET /api/v1/llm/tools` 是兼容旧客户端的 OpenAI 风格函数定义发现接口，不是 MCP 协议实现。
 
 LLM 不直接执行 shell、访问原始分享链接或操作文件系统。它只使用候选 ID 和任务 ID，真实链接只在服务内部交给对应适配器。
+
+`media_acquire` 的副作用边界由两层共同保证：MCP 工具说明要求先展示候选并取得用户明确选择，应用服务还会强制校验 `confirmed: true`。即使调用方绕过 MCP 直接访问 REST 接口，也不能跳过确认门。
 
 ## 下一阶段
 
