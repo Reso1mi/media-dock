@@ -1,0 +1,164 @@
+# Media Scout 架构与边界
+
+## 目标
+
+Media Scout 的核心目标是让 LLM 能安全地完成：
+
+```text
+搜索媒体资源 → 让用户选择 → 调用现有下载器 → 监控 → 整理 → 进入 Jellyfin → 通知
+```
+
+第一版只聚焦搜索平台、候选资源模型、确认门和下载器对接。NAStool 和 mediary-scout 是设计参考，不是运行时依赖。
+
+## 分层
+
+```text
+┌──────────────────────────────────────────────┐
+│ Hermes / Web / Bot / LLM                     │
+│ 解析需求、展示候选、获得确认、查询进度        │
+└──────────────────────┬───────────────────────┘
+                       │ JSON API / LLM tools
+┌──────────────────────▼───────────────────────┐
+│ HTTP API + Application Services               │
+│ SearchService / AcquisitionService / 状态门    │
+└───────────────┬─────────────────┬─────────────┘
+                │                 │
+┌───────────────▼────────┐ ┌──────▼────────────┐
+│ Search Providers        │ │ Downloaders       │
+│ PanSou / Prowlarr       │ │ Transmission      │
+│ 后续可接更多索引器       │ │ 后续接 OpenList   │
+└────────────────────────┘ └───────────────────┘
+                │                 │
+                └────────┬────────┘
+                         ▼
+              /volume2/Media/Downloads
+                         │
+                  后续媒体流水线
+                         │
+        /volume2/Media/TV /Anime /Movie
+                         │
+                      Jellyfin
+```
+
+## 搜索模型
+
+搜索 provider 只需要实现：
+
+```go
+type Provider interface {
+    Name() string
+    Search(context.Context, domain.SearchRequest) ([]domain.Candidate, error)
+}
+```
+
+provider 返回的资源都归一化为 `domain.Candidate`，然后由 `SearchService` 完成：
+
+- 查询词清理；
+- 并行调用多个 provider；
+- 记录每个 provider 的健康状态；
+- 识别画质、编码、字幕和完整性；
+- 按 URL/资源特征去重；
+- 依据用户偏好排序；
+- 生成本次搜索专属的候选 ID。
+
+### PanSou
+
+使用 PanSou 的 `/api/search` 接口，以 `kw` 和 `res=all` 查询。一个搜索结果可能包含多个链接，因此每个链接都会成为独立候选：
+
+- 115、夸克、123 等分享链接归类为 `cloud`；
+- `magnet:` 归类为 `magnet`；
+- torrent 或普通 HTTP 下载链接归类为 `torrent` 或 `http`。
+
+### Prowlarr
+
+使用 Prowlarr 的 `/api/v1/search` 接口，并将 `magnetUrl`、`downloadUrl` 或 `guid` 转换为下载候选。Prowlarr 适合承接 NAStool 中“索引器聚合”的职责；具体站点管理仍由 Prowlarr 完成。
+
+## 候选句柄与副作用隔离
+
+搜索 API 只返回：
+
+- 候选 ID；
+- 标题、来源和资源类型；
+- 大小、画质、字幕、做种数和评分；
+- 是否需要确认。
+
+不返回：
+
+- 原始分享链接；
+- 分享密码；
+- provider 的完整原始 payload。
+
+真实内容保存在服务端的候选注册表中。用户确认后，获取服务根据候选 ID 找到真实链接，再交给下载器。
+
+这样可以避免 LLM 复述、篡改或臆造下载链接，也使“搜索结果”和“可执行获取计划”绑定在同一份快照上。
+
+## 获取接口
+
+下载器只需要实现：
+
+```go
+type Downloader interface {
+    Name() string
+    Supports(domain.Candidate) bool
+    Start(context.Context, string, domain.Candidate, string) (Handle, error)
+    Status(context.Context, string) (RemoteStatus, error)
+    Cancel(context.Context, string) error
+}
+```
+
+当前实现 Transmission：
+
+- 通过 `torrent-add` 添加 magnet、torrent 或 HTTP 下载链接；
+- 处理 Transmission 的 409 session challenge；
+- 通过 `torrent-get` 查询进度；
+- 通过 `torrent-remove` 取消任务；
+- 下载目录固定为 `DOWNLOAD_INCOMING_DIR/<job_id>`。
+
+云盘搜索结果目前可以被安全地展示和选择，但尚未内置网盘转存。下一步应增加独立的 `CloudAcquirer`/`Downloader` 适配器，不要把 OpenList 或某个网盘 API 写进搜索服务。
+
+## 任务状态
+
+当前获取任务：
+
+```text
+queued → acquiring → downloading → downloaded
+                         ├→ failed
+                         ├→ cancelled
+                         └→ unsupported
+```
+
+完整媒体流程后续扩展为：
+
+```text
+downloaded
+  → verifying
+  → identifying
+  → organizing
+  → jellyfin_refreshing
+  → completed
+```
+
+每个状态都应由后台任务持久化，不能依赖聊天记录。
+
+## 安全和可靠性要求
+
+- 下载必须经过显式确认；
+- 下载器只接受白名单候选类型；
+- 临时目录和正式媒体库隔离；
+- 不允许 LLM 直接传入任意目标路径；
+- 后续文件移动必须校验目标路径位于 `/volume2/Media` 内；
+- 搜索会话和候选必须设置 TTL；
+- provider 可以部分失败，不能因为一个索引器异常阻断其他结果；
+- 下载完成后要重新读取真实文件状态，不能仅凭下载器返回值标记入库；
+- 删除和覆盖操作默认关闭，优先进入 quarantine。
+
+## 为什么先做模块化单体
+
+当前部署目标是单用户 NAS，搜索、获取和后续媒体整理之间需要共享候选句柄、任务状态和文件路径。第一阶段使用一个 Go 服务加后台 Worker 更合适：
+
+- 调试链路短；
+- 适合 Docker Compose 部署；
+- provider 和 downloader 已经通过接口隔离；
+- 将内存 Store 替换为 SQLite/PostgreSQL 后，仍可保持相同业务边界。
+
+没有必要在搜索平台尚未稳定之前拆成多个微服务。

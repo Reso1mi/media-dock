@@ -1,0 +1,14 @@
+services:
+  media-scout:
+    build: .
+    container_name: media-scout
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      HTTP_ADDR: ":8080"
+      DOWNLOAD_INCOMING_DIR: /downloads/incoming
+    volumes:
+      - ${MEDIA_DOWNLOADS_HOST_PATH:-./data/downloads}:/downloads
