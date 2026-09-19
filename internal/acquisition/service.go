@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +35,15 @@ func NewService(memoryStore *store.MemoryStore, downloaders []Downloader, incomi
 		incomingDir: incomingDir,
 		now:         time.Now,
 	}
+}
+
+func (s *Service) DownloaderNames() []string {
+	names := make([]string, 0, len(s.downloaders))
+	for _, downloader := range s.downloaders {
+		names = append(names, downloader.Name())
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (s *Service) Start(ctx context.Context, candidateID string, confirmed bool) (domain.AcquisitionJob, error) {

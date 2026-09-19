@@ -25,8 +25,8 @@ Media Scout 的核心目标是让 LLM 能安全地完成：
                 │                 │
 ┌───────────────▼────────┐ ┌──────▼────────────┐
 │ Search Providers        │ │ Downloaders       │
-│ PanSou / Prowlarr       │ │ Transmission      │
-│ 后续可接更多索引器       │ │ 后续接 OpenList   │
+│ PanSou / Prowlarr       │ │ 可配置适配器       │
+│ 后续可接更多索引器       │ │ Transmission/...  │
 └────────────────────────┘ └───────────────────┘
                 │                 │
                 └────────┬────────┘
@@ -113,6 +113,14 @@ type Downloader interface {
 - 通过 `torrent-get` 查询进度；
 - 通过 `torrent-remove` 取消任务；
 - 下载目录固定为 `DOWNLOAD_INCOMING_DIR/<job_id>`。
+
+下载器不是必选组件。通过 `DOWNLOADERS` 使用逗号分隔的名称启用，例如：
+
+```text
+DOWNLOADERS=transmission
+```
+
+留空时服务运行在搜索模式；`/api/v1/downloaders` 可查看实际启用的适配器。未知名称只会记录警告并忽略，不会阻止搜索服务启动。
 
 云盘搜索结果目前可以被安全地展示和选择，但尚未内置网盘转存。下一步应增加独立的 `CloudAcquirer`/`Downloader` 适配器，不要把 OpenList 或某个网盘 API 写进搜索服务。
 

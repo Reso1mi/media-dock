@@ -79,3 +79,33 @@ func TestToolsEndpointReturnsLLMDefinitions(t *testing.T) {
 		t.Fatalf("expected LLM tool definitions: %s", response.Body.String())
 	}
 }
+
+func TestDownloadersEndpointReflectsEnabledAdapters(t *testing.T) {
+	memoryStore := store.NewMemoryStore()
+	searchService := search.NewService(memoryStore, nil, time.Second, time.Minute)
+	acquisitionService := acquisition.NewService(memoryStore, []acquisition.Downloader{
+		fakeDownloader{name: "transmission"},
+	}, t.TempDir())
+	server := NewServer(searchService, acquisitionService, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/downloaders", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte("transmission")) {
+		t.Fatalf("unexpected downloaders response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+type fakeDownloader struct {
+	name string
+}
+
+func (d fakeDownloader) Name() string                   { return d.name }
+func (d fakeDownloader) Supports(domain.Candidate) bool { return true }
+func (d fakeDownloader) Start(context.Context, string, domain.Candidate, string) (acquisition.Handle, error) {
+	return acquisition.Handle{RemoteID: "fake"}, nil
+}
+func (d fakeDownloader) Status(context.Context, string) (acquisition.RemoteStatus, error) {
+	return acquisition.RemoteStatus{Status: "downloading"}, nil
+}
+func (d fakeDownloader) Cancel(context.Context, string) error { return nil }

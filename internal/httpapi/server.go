@@ -43,6 +43,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/providers", s.handleProviders)
+	s.mux.HandleFunc("GET /api/v1/downloaders", s.handleDownloaders)
 	s.mux.HandleFunc("GET /api/v1/llm/tools", s.handleTools)
 	s.mux.HandleFunc("POST /api/v1/search", s.handleSearch)
 	s.mux.HandleFunc("GET /api/v1/searches/{id}", s.handleGetSearch)
@@ -57,6 +58,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleProviders(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"providers": s.search.ProviderNames()})
+}
+
+func (s *Server) handleDownloaders(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"downloaders": s.acquisition.DownloaderNames()})
 }
 
 func (s *Server) handleTools(w http.ResponseWriter, _ *http.Request) {

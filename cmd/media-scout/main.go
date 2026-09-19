@@ -31,13 +31,19 @@ func main() {
 	}
 	searchService := search.NewService(memoryStore, providers, cfg.SearchTimeout, cfg.SearchTTL)
 
-	downloaders := []acquisition.Downloader{
-		acquisition.NewTransmissionDownloader(
-			cfg.TransmissionRPCURL,
-			cfg.TransmissionUser,
-			cfg.TransmissionPassword,
-			nil,
-		),
+	downloaders := make([]acquisition.Downloader, 0, len(cfg.Downloaders))
+	for _, name := range cfg.Downloaders {
+		switch name {
+		case "transmission":
+			downloaders = append(downloaders, acquisition.NewTransmissionDownloader(
+				cfg.TransmissionRPCURL,
+				cfg.TransmissionUser,
+				cfg.TransmissionPassword,
+				nil,
+			))
+		default:
+			logger.Printf("unknown downloader %q; it will be ignored", name)
+		}
 	}
 	acquisitionService := acquisition.NewService(memoryStore, downloaders, cfg.IncomingDir)
 	server := &http.Server{
@@ -53,7 +59,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		logger.Printf("listening on %s; search providers=%v", cfg.HTTPAddr, searchService.ProviderNames())
+		logger.Printf("listening on %s; search providers=%v; downloaders=%v", cfg.HTTPAddr, searchService.ProviderNames(), acquisitionService.DownloaderNames())
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("HTTP server failed: %v", err)
 		}

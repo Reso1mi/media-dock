@@ -22,7 +22,7 @@
 - 候选资源统一模型、去重、质量/字幕/做种评分；
 - 候选资源句柄隔离：API 不返回原始分享链接、密码和 provider payload；
 - 用户确认门：没有 `confirmed: true` 不会创建获取任务；
-- Transmission RPC 下载适配器，支持磁力和 torrent/HTTP 下载链接；
+- 可配置的下载器适配器；当前包含 Transmission RPC，支持磁力和 torrent/HTTP 下载链接；
 - 面向 LLM 的 OpenAI 风格工具定义接口；
 - 基础测试和 Docker 镜像构建文件。
 
@@ -33,6 +33,7 @@
 ```powershell
 Copy-Item .env.example .env
 $env:PANSOU_BASE_URL = "http://127.0.0.1:80"
+$env:DOWNLOADERS = "transmission"
 $env:TRANSMISSION_RPC_URL = "http://127.0.0.1:9091/transmission/rpc"
 go run ./cmd/media-scout
 ```
@@ -42,6 +43,7 @@ go run ./cmd/media-scout
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/healthz
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/providers
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/downloaders
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/llm/tools
 ```
 
@@ -87,11 +89,14 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/jobs/job_xxx
 | `PANSOU_BASE_URL` | PanSou / pansou-web 地址 |
 | `PROWLARR_BASE_URL` | 可选，Prowlarr 地址 |
 | `PROWLARR_API_KEY` | Prowlarr API Key |
+| `DOWNLOADERS` | 可选，逗号分隔的下载器名称；留空表示搜索模式 |
 | `TRANSMISSION_RPC_URL` | Transmission RPC 地址 |
 | `TRANSMISSION_USER` / `TRANSMISSION_PASSWORD` | Transmission 认证 |
 | `DOWNLOAD_INCOMING_DIR` | 下载临时目录，必须是服务和下载器都能看到的路径 |
 
 如果服务和 Transmission 在不同容器中运行，`DOWNLOAD_INCOMING_DIR` 必须使用双方共享卷中的同一个容器路径；不能直接使用宿主机路径替代容器内路径。
+
+`DOWNLOADERS` 留空时服务仍可正常搜索，但确认获取会返回 `downloader_unavailable`。这样可以先部署搜索平台，再按需启用下载器。后续新增 OpenList、aria2 等适配器时，只需增加适配器并在此配置中启用。
 
 ## LLM 接口边界
 
