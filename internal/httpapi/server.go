@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"strings"
 
-	"nas-bot/internal/acquisition"
-	"nas-bot/internal/domain"
-	"nas-bot/internal/llm"
-	"nas-bot/internal/search"
-	"nas-bot/internal/store"
+	"github.com/Reso1mi/media-dock/internal/acquisition"
+	"github.com/Reso1mi/media-dock/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/llm"
+	"github.com/Reso1mi/media-dock/internal/search"
+	"github.com/Reso1mi/media-dock/internal/store"
 )
 
 type Server struct {

@@ -12,10 +12,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"nas-bot/internal/acquisition"
-	"nas-bot/internal/domain"
-	"nas-bot/internal/search"
-	"nas-bot/internal/store"
+	"github.com/Reso1mi/media-dock/internal/acquisition"
+	"github.com/Reso1mi/media-dock/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/search"
+	"github.com/Reso1mi/media-dock/internal/store"
 )
 
 func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
@@ -30,7 +30,7 @@ func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	client := mcp.NewClient(&mcp.Implementation{Name: "nas-bot-test-client", Version: "0.1.0"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "media-dock-test-client", Version: "0.1.0"}, nil)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   httpServer.URL,
 		MaxRetries: -1,

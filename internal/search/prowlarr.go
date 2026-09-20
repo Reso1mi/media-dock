@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"nas-bot/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/domain"
 )
 
 // ProwlarrProvider follows the common indexer API shape used by NAS media
@@ -56,7 +56,7 @@ func (p *ProwlarrProvider) Search(ctx context.Context, request domain.SearchRequ
 	}
 	req.Header.Set("X-Api-Key", p.APIKey)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "media-scout/0.1")
+	req.Header.Set("User-Agent", "media-dock/0.1")
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("prowlarr request: %w", err)

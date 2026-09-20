@@ -1,4 +1,4 @@
-# Media Scout
+# MediaDock
 
 面向 LLM 的自部署媒体资源搜索与获取编排服务。
 
@@ -37,7 +37,7 @@ Copy-Item .env.example .env
 $env:PANSOU_BASE_URL = "http://127.0.0.1:80"
 $env:DOWNLOADERS = "transmission"
 $env:TRANSMISSION_RPC_URL = "http://127.0.0.1:9091/transmission/rpc"
-go run ./cmd/media-scout
+go run ./cmd/media-dock
 ```
 
 检查服务：

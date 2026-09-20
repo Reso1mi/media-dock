@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"nas-bot/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/domain"
 )
 
 var ErrNotFound = errors.New("resource not found")

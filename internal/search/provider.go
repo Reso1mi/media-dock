@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"nas-bot/internal/domain"
-	"nas-bot/internal/id"
-	"nas-bot/internal/store"
+	"github.com/Reso1mi/media-dock/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/id"
+	"github.com/Reso1mi/media-dock/internal/store"
 )
 
 var ErrNoProviders = errors.New("no search providers are configured")

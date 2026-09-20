@@ -3,7 +3,7 @@ package acquisition
 import (
 	"context"
 
-	"nas-bot/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/domain"
 )
 
 type Handle struct {

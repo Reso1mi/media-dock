@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"nas-bot/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/domain"
 )
 
 func TestTransmissionNegotiatesSessionAndAddsTorrent(t *testing.T) {

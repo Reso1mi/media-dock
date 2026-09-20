@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"nas-bot/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/domain"
 )
 
 // PansouProvider consumes the small, stable API exposed by pansou-web. It is
@@ -66,7 +66,7 @@ func (p *PansouProvider) Search(ctx context.Context, request domain.SearchReques
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "media-scout/0.1")
+	req.Header.Set("User-Agent", "media-dock/0.1")
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("pansou request: %w", err)

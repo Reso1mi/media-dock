@@ -1,8 +1,8 @@
-# Media Scout 架构与边界
+# MediaDock 架构与边界
 
 ## 目标
 
-Media Scout 的核心目标是让 LLM 能安全地完成：
+MediaDock 的核心目标是让 LLM 能安全地完成：
 
 ```text
 搜索媒体资源 → 让用户选择 → 调用现有下载器 → 监控 → 整理 → 进入 Jellyfin → 通知

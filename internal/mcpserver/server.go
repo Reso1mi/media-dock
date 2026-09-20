@@ -1,4 +1,4 @@
-// Package mcpserver exposes the Media Scout application through the official
+// Package mcpserver exposes the MediaDock application through the official
 // Model Context Protocol Go SDK. The MCP layer is deliberately thin: all
 // business rules, confirmation gates, provider selection and downloader
 // integration remain in the application services.
@@ -14,9 +14,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"nas-bot/internal/acquisition"
-	"nas-bot/internal/domain"
-	"nas-bot/internal/search"
+	"github.com/Reso1mi/media-dock/internal/acquisition"
+	"github.com/Reso1mi/media-dock/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/search"
 )
 
 const serverVersion = "0.2.0"
@@ -99,8 +99,8 @@ type CapabilitiesOutput struct {
 
 func NewServer(searchService *search.Service, acquisitionService *acquisition.Service) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "nas-bot",
-		Title:   "NAS Bot Media Orchestrator",
+		Name:    "media-dock",
+		Title:   "MediaDock Media Orchestrator",
 		Version: serverVersion,
 	}, &mcp.ServerOptions{
 		Instructions: "Use media_search first. Show candidates to the user and obtain explicit confirmation before calling media_acquire. Raw provider URLs and credentials are intentionally never exposed through MCP.",
@@ -142,7 +142,7 @@ func NewServer(searchService *search.Service, acquisitionService *acquisition.Se
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "media_capabilities",
-		Title:       "Inspect Media Scout capabilities",
+		Title:       "Inspect MediaDock capabilities",
 		Description: "List configured search providers and downloaders before planning a media acquisition.",
 		Annotations: &mcp.ToolAnnotations{Title: "Inspect capabilities", ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, handlers.capabilities)
@@ -169,7 +169,7 @@ func BearerAuth(next http.Handler, token string) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !validBearerToken(r.Header.Get("Authorization"), token) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="nas-bot-mcp"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="media-dock-mcp"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

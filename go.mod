@@ -1,4 +1,4 @@
-module nas-bot
+module github.com/Reso1mi/media-dock
 
 go 1.23.0
 

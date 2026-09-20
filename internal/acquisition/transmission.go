@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"nas-bot/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/domain"
 )
 
 type TransmissionDownloader struct {

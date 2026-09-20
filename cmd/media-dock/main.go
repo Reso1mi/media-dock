@@ -10,17 +10,17 @@ import (
 	"syscall"
 	"time"
 
-	"nas-bot/internal/acquisition"
-	"nas-bot/internal/config"
-	"nas-bot/internal/httpapi"
-	"nas-bot/internal/mcpserver"
-	"nas-bot/internal/search"
-	"nas-bot/internal/store"
+	"github.com/Reso1mi/media-dock/internal/acquisition"
+	"github.com/Reso1mi/media-dock/internal/config"
+	"github.com/Reso1mi/media-dock/internal/httpapi"
+	"github.com/Reso1mi/media-dock/internal/mcpserver"
+	"github.com/Reso1mi/media-dock/internal/search"
+	"github.com/Reso1mi/media-dock/internal/store"
 )
 
 func main() {
 	cfg := config.FromEnv()
-	logger := log.New(os.Stdout, "media-scout ", log.LstdFlags|log.Lmicroseconds)
+	logger := log.New(os.Stdout, "media-dock ", log.LstdFlags|log.Lmicroseconds)
 
 	memoryStore := store.NewMemoryStore()
 	providers := make([]search.Provider, 0, 2)

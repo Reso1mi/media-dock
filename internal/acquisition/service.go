@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"nas-bot/internal/domain"
-	"nas-bot/internal/id"
-	"nas-bot/internal/store"
+	"github.com/Reso1mi/media-dock/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/id"
+	"github.com/Reso1mi/media-dock/internal/store"
 )
 
 var (

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"nas-bot/internal/domain"
-	"nas-bot/internal/store"
+	"github.com/Reso1mi/media-dock/internal/domain"
+	"github.com/Reso1mi/media-dock/internal/store"
 )
 
 func TestPansouProviderSearchNormalizesLinks(t *testing.T) {
