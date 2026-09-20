@@ -6,17 +6,19 @@ package mcpserver
 
 import (
 	"context"
-	"crypto/subtle"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Reso1mi/media-dock/internal/acquisition"
+	"github.com/Reso1mi/media-dock/internal/auth"
 	"github.com/Reso1mi/media-dock/internal/domain"
 	"github.com/Reso1mi/media-dock/internal/search"
+	"github.com/Reso1mi/media-dock/internal/store"
 )
 
 const serverVersion = "0.2.0"
@@ -37,33 +39,46 @@ type SearchInput struct {
 }
 
 type AcquireInput struct {
-	CandidateID string `json:"candidate_id" jsonschema:"candidate ID returned by media_search"`
-	Confirmed   bool   `json:"confirmed" jsonschema:"must be true only after the user explicitly selected this candidate"`
+	CandidateID    string `json:"candidate_id" jsonschema:"candidate ID returned by media_search"`
+	Confirmed      bool   `json:"confirmed" jsonschema:"must be true only after the user explicitly selected this candidate"`
+	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional stable key used to safely retry the same acquisition request"`
 }
 
 type JobInput struct {
 	JobID string `json:"job_id" jsonschema:"acquisition job ID"`
 }
 
+type JobsListInput struct {
+	Limit    int      `json:"limit,omitempty" jsonschema:"maximum number of jobs, defaults to 20 and is capped at 100"`
+	Offset   int      `json:"offset,omitempty" jsonschema:"number of jobs to skip"`
+	Statuses []string `json:"statuses,omitempty" jsonschema:"optional statuses such as downloading, failed, or downloaded"`
+}
+
+type CandidateAcquisitionOutput struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 type CandidateOutput struct {
-	ID                   string   `json:"id"`
-	Rank                 int      `json:"rank"`
-	Provider             string   `json:"provider"`
-	Kind                 string   `json:"kind"`
-	Title                string   `json:"title"`
-	SourceName           string   `json:"source_name,omitempty"`
-	SizeBytes            int64    `json:"size_bytes,omitempty"`
-	Quality              string   `json:"quality,omitempty"`
-	Codec                string   `json:"codec,omitempty"`
-	Audio                string   `json:"audio,omitempty"`
-	Subtitles            []string `json:"subtitles,omitempty"`
-	Tags                 []string `json:"tags,omitempty"`
-	Seeders              int      `json:"seeders,omitempty"`
-	Leechers             int      `json:"leechers,omitempty"`
-	Completeness         string   `json:"completeness,omitempty"`
-	PublishedAt          string   `json:"published_at,omitempty"`
-	Score                float64  `json:"score"`
-	RequiresConfirmation bool     `json:"requires_confirmation"`
+	ID                   string                     `json:"id"`
+	Rank                 int                        `json:"rank"`
+	Provider             string                     `json:"provider"`
+	Kind                 string                     `json:"kind"`
+	Title                string                     `json:"title"`
+	SourceName           string                     `json:"source_name,omitempty"`
+	SizeBytes            int64                      `json:"size_bytes,omitempty"`
+	Quality              string                     `json:"quality,omitempty"`
+	Codec                string                     `json:"codec,omitempty"`
+	Audio                string                     `json:"audio,omitempty"`
+	Subtitles            []string                   `json:"subtitles,omitempty"`
+	Tags                 []string                   `json:"tags,omitempty"`
+	Seeders              int                        `json:"seeders,omitempty"`
+	Leechers             int                        `json:"leechers,omitempty"`
+	Completeness         string                     `json:"completeness,omitempty"`
+	PublishedAt          string                     `json:"published_at,omitempty"`
+	Score                float64                    `json:"score"`
+	RequiresConfirmation bool                       `json:"requires_confirmation"`
+	Acquisition          CandidateAcquisitionOutput `json:"acquisition"`
 }
 
 type SearchOutput struct {
@@ -78,23 +93,38 @@ type SearchOutput struct {
 }
 
 type JobOutput struct {
-	JobID       string           `json:"job_id"`
-	SearchID    string           `json:"search_id,omitempty"`
-	CandidateID string           `json:"candidate_id"`
-	Downloader  string           `json:"downloader,omitempty"`
-	Status      domain.JobStatus `json:"status"`
-	Progress    float64          `json:"progress"`
-	Message     string           `json:"message,omitempty"`
-	Error       string           `json:"error,omitempty"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	JobID         string              `json:"job_id"`
+	SearchID      string              `json:"search_id,omitempty"`
+	CandidateID   string              `json:"candidate_id"`
+	Downloader    string              `json:"downloader,omitempty"`
+	Status        domain.JobStatus    `json:"status"`
+	Ownership     domain.JobOwnership `json:"ownership,omitempty"`
+	CanCancel     bool                `json:"can_cancel"`
+	StatusStale   bool                `json:"status_stale"`
+	LastCheckedAt *time.Time          `json:"last_checked_at,omitempty"`
+	Progress      float64             `json:"progress"`
+	Message       string              `json:"message,omitempty"`
+	Error         string              `json:"error,omitempty"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+}
+
+type JobsListOutput struct {
+	Jobs   []JobOutput `json:"jobs"`
+	Limit  int         `json:"limit"`
+	Offset int         `json:"offset"`
 }
 
 type CapabilitiesOutput struct {
-	SearchProviders []string `json:"search_providers"`
-	Downloaders     []string `json:"downloaders"`
-	Transport       string   `json:"transport"`
-	Confirmation    string   `json:"confirmation"`
+	SchemaVersion   int                            `json:"schema_version"`
+	Mode            string                         `json:"mode"`
+	Providers       []domain.ComponentCapability   `json:"providers"`
+	Acquisition     domain.AcquisitionCapabilities `json:"acquisition"`
+	Policy          domain.CapabilityPolicy        `json:"policy"`
+	SearchProviders []string                       `json:"search_providers"`
+	Downloaders     []string                       `json:"downloaders"`
+	Transport       string                         `json:"transport"`
+	Confirmation    string                         `json:"confirmation"`
 }
 
 func NewServer(searchService *search.Service, acquisitionService *acquisition.Service) *mcp.Server {
@@ -141,6 +171,13 @@ func NewServer(searchService *search.Service, acquisitionService *acquisition.Se
 	}, handlers.cancelJob)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "media_jobs_list",
+		Title:       "List acquisition jobs",
+		Description: "Find recent, active, or failed acquisition jobs after a chat session was interrupted. This is read-only and supports bounded pagination and status filters.",
+		Annotations: &mcp.ToolAnnotations{Title: "List acquisition jobs", ReadOnlyHint: readOnly, OpenWorldHint: &openWorld},
+	}, handlers.jobsList)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "media_capabilities",
 		Title:       "Inspect MediaDock capabilities",
 		Description: "List configured search providers and downloaders before planning a media acquisition.",
@@ -159,35 +196,15 @@ func NewHTTPHandler(server *mcp.Server) http.Handler {
 	}, &mcp.StreamableHTTPOptions{JSONResponse: true})
 }
 
-// BearerAuth protects the MCP endpoint when MCP_AUTH_TOKEN is configured. An
-// empty token intentionally leaves authentication to the NAS reverse proxy or
-// private network, which keeps local development convenient.
+// BearerAuth is kept in this package for source compatibility with existing
+// callers. REST and MCP endpoints both use the same implementation from the
+// auth package.
 func BearerAuth(next http.Handler, token string) http.Handler {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !validBearerToken(r.Header.Get("Authorization"), token) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="media-dock-mcp"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return auth.BearerAuth(next, token)
 }
 
 func validBearerToken(header, expected string) bool {
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return false
-	}
-	provided := []byte(parts[1])
-	wanted := []byte(expected)
-	if len(provided) != len(wanted) {
-		return false
-	}
-	return subtle.ConstantTimeCompare(provided, wanted) == 1
+	return auth.ValidBearerToken(header, expected)
 }
 
 func (h *Handler) searchMedia(ctx context.Context, _ *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
@@ -201,18 +218,18 @@ func (h *Handler) searchMedia(ctx context.Context, _ *mcp.CallToolRequest, input
 		Limit:     input.Limit,
 	})
 	if err != nil {
-		return nil, SearchOutput{}, err
+		return nil, SearchOutput{}, toolError(err)
 	}
-	return nil, toSearchOutput(result.Session), nil
+	return nil, toSearchOutput(result.Session, h.acquisition), nil
 }
 
 func (h *Handler) acquireMedia(ctx context.Context, _ *mcp.CallToolRequest, input AcquireInput) (*mcp.CallToolResult, JobOutput, error) {
-	job, err := h.acquisition.Start(ctx, input.CandidateID, input.Confirmed)
+	job, err := h.acquisition.StartWithIdempotency(ctx, input.CandidateID, input.Confirmed, input.IdempotencyKey)
 	if err != nil {
 		if job.ID != "" {
-			return nil, JobOutput{}, fmt.Errorf("%w (job_id=%s)", err, job.ID)
+			return nil, JobOutput{}, toolError(fmt.Errorf("%w (job_id=%s)", err, job.ID))
 		}
-		return nil, JobOutput{}, err
+		return nil, JobOutput{}, toolError(err)
 	}
 	return nil, toJobOutput(job), nil
 }
@@ -220,7 +237,10 @@ func (h *Handler) acquireMedia(ctx context.Context, _ *mcp.CallToolRequest, inpu
 func (h *Handler) jobStatus(ctx context.Context, _ *mcp.CallToolRequest, input JobInput) (*mcp.CallToolResult, JobOutput, error) {
 	job, err := h.acquisition.Get(ctx, input.JobID)
 	if err != nil {
-		return nil, JobOutput{}, err
+		if job.ID != "" && job.StatusStale {
+			return nil, toJobOutput(job), nil
+		}
+		return nil, JobOutput{}, toolError(err)
 	}
 	return nil, toJobOutput(job), nil
 }
@@ -228,13 +248,98 @@ func (h *Handler) jobStatus(ctx context.Context, _ *mcp.CallToolRequest, input J
 func (h *Handler) cancelJob(ctx context.Context, _ *mcp.CallToolRequest, input JobInput) (*mcp.CallToolResult, JobOutput, error) {
 	job, err := h.acquisition.Cancel(ctx, input.JobID)
 	if err != nil {
-		return nil, JobOutput{}, err
+		return nil, JobOutput{}, toolError(err)
 	}
 	return nil, toJobOutput(job), nil
 }
 
+func (h *Handler) jobsList(_ context.Context, _ *mcp.CallToolRequest, input JobsListInput) (*mcp.CallToolResult, JobsListOutput, error) {
+	limit := input.Limit
+	if limit < 0 {
+		return nil, JobsListOutput{}, toolError(fmt.Errorf("limit must be between 1 and 100"))
+	}
+	if limit == 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		return nil, JobsListOutput{}, toolError(fmt.Errorf("limit must be between 1 and 100"))
+	}
+	if input.Offset < 0 {
+		return nil, JobsListOutput{}, toolError(fmt.Errorf("offset must not be negative"))
+	}
+	statuses, err := acquisition.ParseJobStatuses(input.Statuses)
+	if err != nil {
+		return nil, JobsListOutput{}, toolError(err)
+	}
+	jobs, err := h.acquisition.ListJobs(store.JobQuery{Limit: limit, Offset: input.Offset, Statuses: statuses})
+	if err != nil {
+		return nil, JobsListOutput{}, toolError(err)
+	}
+	output := JobsListOutput{Jobs: make([]JobOutput, 0, len(jobs)), Limit: limit, Offset: input.Offset}
+	for _, job := range jobs {
+		output.Jobs = append(output.Jobs, toJobOutput(job))
+	}
+	return nil, output, nil
+}
+
+func toolError(err error) error {
+	code := "internal_error"
+	retryable := true
+	nextAction := "retry_or_check_service_logs"
+	switch {
+	case errors.Is(err, search.ErrInvalidRequest), errors.Is(err, acquisition.ErrInvalidRequest):
+		code = "invalid_request"
+		retryable = false
+		nextAction = "fix_arguments"
+	case errors.Is(err, acquisition.ErrConfirmationRequired):
+		code = "confirmation_required"
+		retryable = false
+		nextAction = "show_candidate_and_confirm"
+	case errors.Is(err, acquisition.ErrSearchSessionExpired):
+		code = "candidate_expired"
+		retryable = false
+		nextAction = "search_again"
+	case errors.Is(err, acquisition.ErrDownloaderUnavailable):
+		code = "downloader_unavailable"
+		retryable = false
+		nextAction = "inspect_capabilities_or_configuration"
+	case errors.Is(err, acquisition.ErrIdempotencyConflict):
+		code = "idempotency_conflict"
+		retryable = false
+		nextAction = "use_a_new_idempotency_key"
+	case errors.Is(err, acquisition.ErrRemoteTaskNotManaged):
+		code = "remote_task_not_managed"
+		retryable = false
+		nextAction = "inspect_the_downloader_directly"
+	case errors.Is(err, store.ErrNotFound):
+		code = "not_found"
+		retryable = false
+		nextAction = "search_again_or_list_jobs"
+	}
+	payload, marshalErr := json.Marshal(map[string]any{
+		"code":        code,
+		"message":     err.Error(),
+		"retryable":   retryable,
+		"next_action": nextAction,
+	})
+	if marshalErr != nil {
+		return err
+	}
+	return errors.New(string(payload))
+}
+
 func (h *Handler) capabilities(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, CapabilitiesOutput, error) {
+	acquisitionCapabilities, downloaders := h.acquisition.Capabilities()
+	mode := "search_only"
+	if len(downloaders) > 0 {
+		mode = "search_and_acquire"
+	}
 	return nil, CapabilitiesOutput{
+		SchemaVersion:   1,
+		Mode:            mode,
+		Providers:       h.search.Capabilities(),
+		Acquisition:     acquisitionCapabilities,
+		Policy:          domain.CapabilityPolicy{ConfirmationRequired: true, ManageExistingTasks: false, DeleteFiles: false},
 		SearchProviders: h.search.ProviderNames(),
 		Downloaders:     h.acquisition.DownloaderNames(),
 		Transport:       "streamable-http",
@@ -242,9 +347,10 @@ func (h *Handler) capabilities(context.Context, *mcp.CallToolRequest, struct{}) 
 	}, nil
 }
 
-func toSearchOutput(session domain.SearchSession) SearchOutput {
+func toSearchOutput(session domain.SearchSession, acquisitionService *acquisition.Service) SearchOutput {
 	candidates := make([]CandidateOutput, 0, len(session.Candidates))
 	for _, candidate := range session.Candidates {
+		available, reason := acquisitionService.CandidateAvailability(candidate)
 		candidates = append(candidates, CandidateOutput{
 			ID:                   candidate.ID,
 			Rank:                 candidate.Rank,
@@ -264,6 +370,7 @@ func toSearchOutput(session domain.SearchSession) SearchOutput {
 			PublishedAt:          candidate.PublishedAt,
 			Score:                candidate.Score,
 			RequiresConfirmation: true,
+			Acquisition:          CandidateAcquisitionOutput{Available: available, Reason: reason},
 		})
 	}
 	return SearchOutput{
@@ -280,15 +387,19 @@ func toSearchOutput(session domain.SearchSession) SearchOutput {
 
 func toJobOutput(job domain.AcquisitionJob) JobOutput {
 	return JobOutput{
-		JobID:       job.ID,
-		SearchID:    job.SearchID,
-		CandidateID: job.CandidateID,
-		Downloader:  job.Downloader,
-		Status:      job.Status,
-		Progress:    job.Progress,
-		Message:     job.Message,
-		Error:       job.Error,
-		CreatedAt:   job.CreatedAt,
-		UpdatedAt:   job.UpdatedAt,
+		JobID:         job.ID,
+		SearchID:      job.SearchID,
+		CandidateID:   job.CandidateID,
+		Downloader:    job.Downloader,
+		Status:        job.Status,
+		Ownership:     job.Ownership,
+		CanCancel:     job.Ownership != domain.JobOwnershipExternal && job.Status != domain.JobDownloaded && job.Status != domain.JobCancelled && job.Status != domain.JobFailed,
+		StatusStale:   job.StatusStale,
+		LastCheckedAt: job.LastCheckedAt,
+		Progress:      job.Progress,
+		Message:       job.Message,
+		Error:         job.Error,
+		CreatedAt:     job.CreatedAt,
+		UpdatedAt:     job.UpdatedAt,
 	}
 }

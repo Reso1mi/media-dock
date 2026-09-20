@@ -16,21 +16,33 @@ import (
 // intentionally a search provider only; turning a cloud-drive link into a
 // local file belongs to an acquisition adapter.
 type PansouProvider struct {
-	BaseURL string
-	Client  *http.Client
+	InstanceID string
+	BaseURL    string
+	Client     *http.Client
 }
 
 func NewPansouProvider(baseURL string, client *http.Client) *PansouProvider {
+	return NewNamedPansouProvider("pansou", baseURL, client)
+}
+
+func NewNamedPansouProvider(id, baseURL string, client *http.Client) *PansouProvider {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &PansouProvider{
-		BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		Client:  client,
+		InstanceID: strings.TrimSpace(id),
+		BaseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		Client:     client,
 	}
 }
 
-func (p *PansouProvider) Name() string { return "pansou" }
+func (p *PansouProvider) Name() string {
+	if strings.TrimSpace(p.InstanceID) != "" {
+		return strings.TrimSpace(p.InstanceID)
+	}
+	return "pansou"
+}
+func (p *PansouProvider) Type() string { return "pansou" }
 
 type pansouResponse struct {
 	Code int    `json:"code"`
@@ -112,22 +124,7 @@ func (p *PansouProvider) Search(ctx context.Context, request domain.SearchReques
 }
 
 func pansouKind(linkType, rawURL string) string {
-	lowerURL := strings.ToLower(strings.TrimSpace(rawURL))
-	if strings.HasPrefix(lowerURL, "magnet:") {
-		return "magnet"
-	}
-	lowerType := strings.ToLower(strings.TrimSpace(linkType))
-	switch lowerType {
-	case "115", "quark", "123", "tianyi", "aliyun", "baidu", "uc":
-		return "cloud"
-	case "magnet", "torrent":
-		return "magnet"
-	default:
-		if strings.HasSuffix(lowerURL, ".torrent") {
-			return "torrent"
-		}
-		return "http"
-	}
+	return classifyResourceKind(linkType, rawURL)
 }
 
 func completenessFromTitle(title string) string {

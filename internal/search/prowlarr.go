@@ -17,23 +17,35 @@ import (
 // tools. Keeping it as a provider instead of embedding Prowlarr in the domain
 // lets another indexer be added without changing the LLM-facing API.
 type ProwlarrProvider struct {
-	BaseURL string
-	APIKey  string
-	Client  *http.Client
+	InstanceID string
+	BaseURL    string
+	APIKey     string
+	Client     *http.Client
 }
 
 func NewProwlarrProvider(baseURL, apiKey string, client *http.Client) *ProwlarrProvider {
+	return NewNamedProwlarrProvider("prowlarr", baseURL, apiKey, client)
+}
+
+func NewNamedProwlarrProvider(id, baseURL, apiKey string, client *http.Client) *ProwlarrProvider {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &ProwlarrProvider{
-		BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		APIKey:  strings.TrimSpace(apiKey),
-		Client:  client,
+		InstanceID: strings.TrimSpace(id),
+		BaseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		APIKey:     strings.TrimSpace(apiKey),
+		Client:     client,
 	}
 }
 
-func (p *ProwlarrProvider) Name() string { return "prowlarr" }
+func (p *ProwlarrProvider) Name() string {
+	if strings.TrimSpace(p.InstanceID) != "" {
+		return strings.TrimSpace(p.InstanceID)
+	}
+	return "prowlarr"
+}
+func (p *ProwlarrProvider) Type() string { return "prowlarr" }
 
 func (p *ProwlarrProvider) Search(ctx context.Context, request domain.SearchRequest) ([]domain.Candidate, error) {
 	if p.BaseURL == "" {
@@ -98,12 +110,7 @@ func parseProwlarrResults(raw json.RawMessage, providerName string) ([]domain.Ca
 		if rawURL == "" {
 			continue
 		}
-		kind := "http"
-		if strings.HasPrefix(strings.ToLower(rawURL), "magnet:") {
-			kind = "magnet"
-		} else if strings.Contains(strings.ToLower(rawURL), ".torrent") {
-			kind = "torrent"
-		}
+		kind := classifyResourceKind(stringValue(item, "protocol"), rawURL)
 		result = append(result, domain.Candidate{
 			Provider:     providerName,
 			Kind:         kind,

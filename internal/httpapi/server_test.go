@@ -82,17 +82,68 @@ func TestToolsEndpointReturnsLLMDefinitions(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode tool definitions: %v", err)
 	}
-	if len(payload.Tools) != 5 {
-		t.Fatalf("tool definition count = %d, want 5", len(payload.Tools))
+	if len(payload.Tools) != 6 {
+		t.Fatalf("tool definition count = %d, want 6", len(payload.Tools))
 	}
 	seen := make(map[string]bool, len(payload.Tools))
 	for _, tool := range payload.Tools {
 		seen[tool.Function.Name] = true
 	}
-	for _, name := range []string{"media_search", "media_acquire", "media_job_status", "media_job_cancel", "media_capabilities"} {
+	for _, name := range []string{"media_search", "media_acquire", "media_job_status", "media_job_cancel", "media_jobs_list", "media_capabilities"} {
 		if !seen[name] {
 			t.Errorf("missing tool definition %q", name)
 		}
+	}
+}
+
+func TestCapabilitiesEndpointReportsUnavailableKindsWithoutDownloader(t *testing.T) {
+	memoryStore := store.NewMemoryStore()
+	searchService := search.NewService(memoryStore, nil, time.Second, time.Minute)
+	acquisitionService := acquisition.NewService(memoryStore, nil, "")
+	server := NewServer(searchService, acquisitionService, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/capabilities", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("capabilities returned %d: %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Mode        string `json:"mode"`
+		Acquisition struct {
+			SupportedKinds   []string `json:"supported_kinds"`
+			UnavailableKinds []struct {
+				Kind   string `json:"kind"`
+				Reason string `json:"reason"`
+			} `json:"unavailable_kinds"`
+		} `json:"acquisition"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if payload.Mode != "search_only" || len(payload.Acquisition.SupportedKinds) != 0 {
+		t.Fatalf("unexpected capabilities: %#v", payload)
+	}
+	if len(payload.Acquisition.UnavailableKinds) == 0 || payload.Acquisition.UnavailableKinds[0].Reason != "missing_acquirer" {
+		t.Fatalf("missing-acquirer reason was not reported: %#v", payload.Acquisition.UnavailableKinds)
+	}
+}
+
+func TestJobsListEndpointSupportsStatusFilter(t *testing.T) {
+	memoryStore := store.NewMemoryStore()
+	now := time.Now()
+	if err := memoryStore.SaveJob(domain.AcquisitionJob{ID: "job-list", Status: domain.JobFailed, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("save job: %v", err)
+	}
+	searchService := search.NewService(memoryStore, nil, time.Second, time.Minute)
+	acquisitionService := acquisition.NewService(memoryStore, nil, "")
+	server := NewServer(searchService, acquisitionService, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?status=failed", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte("job-list")) {
+		t.Fatalf("unexpected jobs list response: %d %s", response.Code, response.Body.String())
 	}
 }
 

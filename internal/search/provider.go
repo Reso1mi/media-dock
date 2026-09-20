@@ -14,7 +14,10 @@ import (
 	"github.com/Reso1mi/media-dock/internal/store"
 )
 
-var ErrNoProviders = errors.New("no search providers are configured")
+var (
+	ErrNoProviders    = errors.New("no search providers are configured")
+	ErrInvalidRequest = errors.New("invalid search request")
+)
 
 type Provider interface {
 	Name() string
@@ -27,13 +30,13 @@ type SearchResult struct {
 
 type Service struct {
 	providers []Provider
-	store     *store.MemoryStore
+	store     store.Store
 	timeout   time.Duration
 	ttl       time.Duration
 	now       func() time.Time
 }
 
-func NewService(memoryStore *store.MemoryStore, providers []Provider, timeout, ttl time.Duration) *Service {
+func NewService(persistence store.Store, providers []Provider, timeout, ttl time.Duration) *Service {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
@@ -42,7 +45,7 @@ func NewService(memoryStore *store.MemoryStore, providers []Provider, timeout, t
 	}
 	return &Service{
 		providers: providers,
-		store:     memoryStore,
+		store:     persistence,
 		timeout:   timeout,
 		ttl:       ttl,
 		now:       time.Now,
@@ -58,16 +61,41 @@ func (s *Service) ProviderNames() []string {
 	return names
 }
 
+func (s *Service) Capabilities() []domain.ComponentCapability {
+	components := make([]domain.ComponentCapability, 0, len(s.providers))
+	for _, provider := range s.providers {
+		component := domain.ComponentCapability{
+			ID:     provider.Name(),
+			Type:   provider.Name(),
+			State:  "unknown",
+			Reason: "connection_not_checked",
+		}
+		if typed, ok := provider.(interface{ Type() string }); ok && strings.TrimSpace(typed.Type()) != "" {
+			component.Type = typed.Type()
+		}
+		components = append(components, component)
+	}
+	return components
+}
+
 func (s *Service) Search(ctx context.Context, request domain.SearchRequest) (SearchResult, error) {
 	request.Query = CleanQuery(request.Query)
 	if request.Query == "" {
-		return SearchResult{}, fmt.Errorf("query must not be empty")
+		return SearchResult{}, fmt.Errorf("%w: query must not be empty", ErrInvalidRequest)
 	}
-	if request.Limit <= 0 {
+	switch request.MediaType {
+	case "", domain.MediaTypeMovie, domain.MediaTypeTV, domain.MediaTypeAnime:
+	default:
+		return SearchResult{}, fmt.Errorf("%w: media_type must be movie, tv, or anime", ErrInvalidRequest)
+	}
+	if request.Year != nil && (*request.Year < 1888 || *request.Year > time.Now().Year()+2) {
+		return SearchResult{}, fmt.Errorf("%w: year is outside the supported range", ErrInvalidRequest)
+	}
+	if request.Limit < 0 || request.Limit > 100 {
+		return SearchResult{}, fmt.Errorf("%w: limit must be between 1 and 100", ErrInvalidRequest)
+	}
+	if request.Limit == 0 {
 		request.Limit = 20
-	}
-	if request.Limit > 100 {
-		request.Limit = 100
 	}
 	if len(s.providers) == 0 {
 		return SearchResult{}, ErrNoProviders
@@ -149,7 +177,9 @@ func (s *Service) Search(ctx context.Context, request domain.SearchRequest) (Sea
 		CreatedAt:      startedAt,
 		ExpiresAt:      startedAt.Add(s.ttl),
 	}
-	s.store.SaveSearch(session)
+	if err := s.store.SaveSearch(session); err != nil {
+		return SearchResult{}, fmt.Errorf("persist search session: %w", err)
+	}
 	return SearchResult{Session: session}, nil
 }
 

@@ -15,38 +15,56 @@ import (
 )
 
 type TransmissionDownloader struct {
-	Endpoint string
-	Username string
-	Password string
-	Client   *http.Client
+	InstanceID string
+	Endpoint   string
+	Username   string
+	Password   string
+	Client     *http.Client
 
 	mu        sync.Mutex
 	sessionID string
 }
 
 func NewTransmissionDownloader(endpoint, username, password string, client *http.Client) *TransmissionDownloader {
+	return NewNamedTransmissionDownloader("transmission", endpoint, username, password, client)
+}
+
+// NewNamedTransmissionDownloader creates a Transmission connection with a
+// stable instance ID. The legacy constructor above keeps the original ID for
+// single-instance deployments.
+func NewNamedTransmissionDownloader(id, endpoint, username, password string, client *http.Client) *TransmissionDownloader {
 	if client == nil {
 		client = &http.Client{}
 	}
 	return &TransmissionDownloader{
-		Endpoint: strings.TrimSpace(endpoint),
-		Username: username,
-		Password: password,
-		Client:   client,
+		InstanceID: strings.TrimSpace(id),
+		Endpoint:   strings.TrimSpace(endpoint),
+		Username:   username,
+		Password:   password,
+		Client:     client,
 	}
 }
 
-func (d *TransmissionDownloader) Name() string { return "transmission" }
+func (d *TransmissionDownloader) Name() string {
+	if strings.TrimSpace(d.InstanceID) != "" {
+		return strings.TrimSpace(d.InstanceID)
+	}
+	return "transmission"
+}
+
+func (d *TransmissionDownloader) Type() string { return "transmission" }
 
 func (d *TransmissionDownloader) Supports(candidate domain.Candidate) bool {
-	if candidate.RawURL == "" {
+	if strings.TrimSpace(candidate.RawURL) == "" {
 		return false
 	}
 	switch candidate.Kind {
-	case "magnet", "torrent":
-		return true
-	case "http":
-		lower := strings.ToLower(candidate.RawURL)
+	case domain.CandidateKindMagnet:
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(candidate.RawURL)), "magnet:")
+	case domain.CandidateKindTorrent:
+		// Transmission's torrent-add filename accepts a torrent URL. It does
+		// not make a generic HTTP media-file URL a torrent download.
+		lower := strings.ToLower(strings.TrimSpace(candidate.RawURL))
 		return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 	default:
 		return false
@@ -121,6 +139,9 @@ func (d *TransmissionDownloader) call(ctx context.Context, method string, argume
 		if decoded.Error != nil {
 			return fmt.Errorf("transmission error %d: %s", decoded.Error.Code, decoded.Error.Message)
 		}
+		if strings.ToLower(strings.TrimSpace(decoded.Result)) != "success" {
+			return fmt.Errorf("transmission RPC %s failed: result %q", method, decoded.Result)
+		}
 		if result != nil && len(decoded.Arguments) > 0 {
 			if err := json.Unmarshal(decoded.Arguments, result); err != nil {
 				return fmt.Errorf("decode transmission arguments: %w", err)
@@ -147,17 +168,24 @@ func (d *TransmissionDownloader) Start(ctx context.Context, _ string, candidate 
 			Name       string `json:"name"`
 		} `json:"torrent-duplicate"`
 	}
-	if err := d.call(ctx, "torrent-add", map[string]any{
-		"filename":     candidate.RawURL,
-		"download-dir": targetDir,
-	}, &response); err != nil {
+	arguments := map[string]any{"filename": candidate.RawURL}
+	if strings.TrimSpace(targetDir) != "" {
+		arguments["download-dir"] = targetDir
+	}
+	if err := d.call(ctx, "torrent-add", arguments, &response); err != nil {
 		return Handle{}, err
 	}
 	if response.Added != nil {
-		return Handle{RemoteID: transmissionID(response.Added.ID, response.Added.HashString)}, nil
+		return Handle{
+			RemoteID:  transmissionID(response.Added.ID, response.Added.HashString),
+			Ownership: HandleOwnershipManaged,
+		}, nil
 	}
 	if response.Duplicate != nil {
-		return Handle{RemoteID: transmissionID(response.Duplicate.ID, response.Duplicate.HashString)}, nil
+		return Handle{
+			RemoteID:  transmissionID(response.Duplicate.ID, response.Duplicate.HashString),
+			Ownership: HandleOwnershipExternal,
+		}, nil
 	}
 	return Handle{}, fmt.Errorf("transmission did not return a torrent id")
 }

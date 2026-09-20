@@ -45,3 +45,28 @@ func TestFromEnvDoesNotAllowMCPAtRoot(t *testing.T) {
 		t.Fatalf("MCP root path = %q, want /mcp", got)
 	}
 }
+
+func TestResolveAuthTokenPersistsGeneratedToken(t *testing.T) {
+	path := t.TempDir() + "/auth-token"
+	cfg := Config{AuthTokenFile: path}
+	first, err := cfg.ResolveAuthToken()
+	if err != nil {
+		t.Fatalf("resolve first token: %v", err)
+	}
+	second, err := cfg.ResolveAuthToken()
+	if err != nil {
+		t.Fatalf("resolve second token: %v", err)
+	}
+	if first == "" || first != second {
+		t.Fatalf("tokens are not stable: first=%q second=%q", first, second)
+	}
+}
+
+func TestResolveAuthTokenRequiresExplicitDisableForEmptyToken(t *testing.T) {
+	if token, err := (Config{AuthDisabled: true}).ResolveAuthToken(); err != nil || token != "" {
+		t.Fatalf("disabled auth = %q, err=%v", token, err)
+	}
+	if token, err := (Config{AuthTokenFile: t.TempDir() + "/token"}).ResolveAuthToken(); err != nil || token == "" {
+		t.Fatalf("default auth token = %q, err=%v", token, err)
+	}
+}

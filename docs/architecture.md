@@ -2,7 +2,9 @@
 
 ## 目标
 
-MediaDock 的核心目标是让 LLM 能安全地完成：
+MediaDock 是面向 AI 的轻量媒体组件编排服务。它通过 MCP 暴露统一能力，连接已有搜索源、索引器、下载器和其他媒体服务，不重新实现这些组件。
+
+核心目标是让 AI 能安全地完成：
 
 ```text
 搜索媒体资源 → 让用户选择 → 调用现有下载器 → 监控 → 整理 → 进入 Jellyfin → 通知
@@ -55,9 +57,10 @@ initialize → notifications/initialized → tools/list → tools/call
 - `media_search`：并行调用已配置的搜索 provider，返回不含原始链接的候选句柄；
 - `media_acquire`：只接受候选 ID，并要求 `confirmed=true`；
 - `media_job_status` / `media_job_cancel`：查询或取消获取任务；
+- `media_jobs_list`：分页重新发现近期、进行中或失败任务；
 - `media_capabilities`：发现当前 provider/downloader 能力。
 
-`GET /api/v1/llm/tools` 仅返回 OpenAI 风格函数定义，用于兼容旧客户端，不替代 MCP。MCP 的工具 schema、结构化输出和错误结果由官方 SDK 负责序列化。
+`GET /api/v1/capabilities` 返回同一能力契约的 REST 表达，`GET /api/v1/llm/tools` 仅返回 OpenAI 风格函数定义，用于兼容旧客户端，不替代 MCP。MCP 的工具 schema、结构化输出和错误结果由官方 SDK 负责序列化。
 
 MCP 输出刻意不包含 `RawURL`、分享密码、provider 原始 payload、下载器远程 ID 或临时目录。候选句柄只在服务端 Store 中解析，LLM 无法构造任意下载地址或目标路径。
 
@@ -86,9 +89,11 @@ provider 返回的资源都归一化为 `domain.Candidate`，然后由 `SearchSe
 
 使用 PanSou 的 `/api/search` 接口，以 `kw` 和 `res=all` 查询。一个搜索结果可能包含多个链接，因此每个链接都会成为独立候选：
 
-- 115、夸克、123 等分享链接归类为 `cloud`；
+- 115、夸克、123 等分享链接归类为 `cloud_share`；
 - `magnet:` 归类为 `magnet`；
-- torrent 或普通 HTTP 下载链接归类为 `torrent` 或 `http`。
+- 明确的 torrent 地址归类为 `torrent`；
+- 有明确媒体/归档文件扩展名的直链归类为 `http_file`；
+- 无法确认材料类型的普通 HTTP 地址归类为 `unknown`，不会直接宣称可获取。
 
 ### Prowlarr
 
@@ -129,11 +134,11 @@ type Downloader interface {
 
 当前实现 Transmission：
 
-- 通过 `torrent-add` 添加 magnet、torrent 或 HTTP 下载链接；
-- 处理 Transmission 的 409 session challenge；
+- 通过 `torrent-add` 添加 magnet 或明确的 torrent 地址；
+- 处理 Transmission 的 409 session challenge，并校验 RPC `result` 必须为 `success`；
 - 通过 `torrent-get` 查询进度；
 - 通过 `torrent-remove` 取消任务；
-- 下载目录固定为 `DOWNLOAD_INCOMING_DIR/<job_id>`。
+- 配置本地临时目录时使用 `DOWNLOAD_INCOMING_DIR/<job_id>`，留空时不发送 `download-dir`，进入 API-only 模式。
 
 下载器不是必选组件。通过 `DOWNLOADERS` 使用逗号分隔的名称启用，例如：
 
@@ -167,12 +172,12 @@ downloaded
   → completed
 ```
 
-每个状态都应由后台任务持久化，不能依赖聊天记录。MCP 会话只是调用入口，不承载业务状态；任务和候选必须由 Store 管理。
+每个状态都应由后台任务持久化，不能依赖聊天记录。MCP 会话只是调用入口，不承载业务状态；任务和候选由 `store.Store` 管理，默认实现为本机 SQLite。候选的 `RawURL`、密码和原始 payload 作为服务端私有执行材料单独保存，不能直接把对外 JSON 当作数据库快照。SQLite 文件应放在本机配置卷中，不放在远程 SMB/NFS 媒体挂载中。
 
 ## 安全和可靠性要求
 
-- 下载必须经过显式确认；
-- MCP 端点生产环境必须使用 Bearer Token 或可信反向代理认证；
+- 搜索必须经过显式确认；
+- REST 业务接口和 MCP 端点使用同一 Bearer Token；默认生成并持久化 token，只有显式开发模式才允许无认证；`/healthz` 只暴露最少存活信息；
 - Streamable HTTP 服务不能设置会截断长期 SSE 响应的全局写超时；
 - 下载器只接受白名单候选类型；
 - 临时目录和正式媒体库隔离；
@@ -185,7 +190,7 @@ downloaded
 
 ## 为什么先做模块化单体
 
-当前部署目标是单用户 NAS，搜索、获取和后续媒体整理之间需要共享候选句柄、任务状态和文件路径。第一阶段使用一个 Go 服务加后台 Worker 更合适：
+当前部署目标是单用户 NAS，搜索、获取和后续媒体整理之间需要共享候选句柄和任务状态。第一阶段使用一个 Go 服务加后台 Worker 更合适；默认获取只调用下载器 API，不要求 MediaDock 挂载媒体盘：
 
 - 调试链路短；
 - 适合 Docker Compose 部署；

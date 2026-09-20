@@ -37,10 +37,10 @@ func TestPansouProviderSearchNormalizesLinks(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("expected 2 candidates, got %d", len(items))
 	}
-	if items[0].Kind != "cloud" || items[0].Password != "abcd" {
+	if items[0].Kind != domain.CandidateKindCloudShare || items[0].Password != "abcd" {
 		t.Fatalf("unexpected cloud candidate: %#v", items[0])
 	}
-	if items[1].Kind != "magnet" {
+	if items[1].Kind != domain.CandidateKindMagnet {
 		t.Fatalf("unexpected magnet candidate: %#v", items[1])
 	}
 }
@@ -63,8 +63,31 @@ func TestProwlarrProviderUsesAPIKeyAndParsesResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
-	if len(items) != 1 || items[0].Kind != "magnet" || items[0].Seeders != 12 {
+	if len(items) != 1 || items[0].Kind != domain.CandidateKindMagnet || items[0].Seeders != 12 {
 		t.Fatalf("unexpected results: %#v", items)
+	}
+}
+
+func TestProwlarrDoesNotTreatGenericHTTPAsTorrent(t *testing.T) {
+	items, err := parseProwlarrResults(json.RawMessage(`[
+		{"title":"direct video","downloadUrl":"https://indexer.example/download?id=1"},
+		{"title":"torrent file","downloadUrl":"https://indexer.example/file.torrent"},
+		{"title":"media file","downloadUrl":"https://cdn.example/video.mkv"}
+	]`), "prowlarr")
+	if err != nil {
+		t.Fatalf("parse results: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 candidates, got %d", len(items))
+	}
+	if items[0].Kind != domain.CandidateKindUnknown {
+		t.Fatalf("generic HTTP kind = %q, want %q", items[0].Kind, domain.CandidateKindUnknown)
+	}
+	if items[1].Kind != domain.CandidateKindTorrent {
+		t.Fatalf("torrent URL kind = %q, want %q", items[1].Kind, domain.CandidateKindTorrent)
+	}
+	if items[2].Kind != domain.CandidateKindHTTPFile {
+		t.Fatalf("direct file kind = %q, want %q", items[2].Kind, domain.CandidateKindHTTPFile)
 	}
 }
 

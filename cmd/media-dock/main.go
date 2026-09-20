@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Reso1mi/media-dock/internal/acquisition"
+	"github.com/Reso1mi/media-dock/internal/auth"
 	"github.com/Reso1mi/media-dock/internal/config"
 	"github.com/Reso1mi/media-dock/internal/httpapi"
 	"github.com/Reso1mi/media-dock/internal/mcpserver"
@@ -21,8 +22,17 @@ import (
 func main() {
 	cfg := config.FromEnv()
 	logger := log.New(os.Stdout, "media-dock ", log.LstdFlags|log.Lmicroseconds)
+	authToken, err := cfg.ResolveAuthToken()
+	if err != nil {
+		logger.Fatalf("resolve auth token: %v", err)
+	}
 
-	memoryStore := store.NewMemoryStore()
+	persistentStore, err := store.OpenSQLite(cfg.SQLitePath)
+	if err != nil {
+		logger.Fatalf("open sqlite store: %v", err)
+	}
+	defer persistentStore.Close()
+
 	providers := make([]search.Provider, 0, 2)
 	if cfg.PansouBaseURL != "" {
 		providers = append(providers, search.NewPansouProvider(cfg.PansouBaseURL, nil))
@@ -30,7 +40,7 @@ func main() {
 	if cfg.ProwlarrBaseURL != "" {
 		providers = append(providers, search.NewProwlarrProvider(cfg.ProwlarrBaseURL, cfg.ProwlarrAPIKey, nil))
 	}
-	searchService := search.NewService(memoryStore, providers, cfg.SearchTimeout, cfg.SearchTTL)
+	searchService := search.NewService(persistentStore, providers, cfg.SearchTimeout, cfg.SearchTTL)
 
 	downloaders := make([]acquisition.Downloader, 0, len(cfg.Downloaders))
 	for _, name := range cfg.Downloaders {
@@ -46,15 +56,20 @@ func main() {
 			logger.Printf("unknown downloader %q; it will be ignored", name)
 		}
 	}
-	acquisitionService := acquisition.NewService(memoryStore, downloaders, cfg.IncomingDir)
+	acquisitionService := acquisition.NewService(persistentStore, downloaders, cfg.IncomingDir)
 
 	rootMux := http.NewServeMux()
-	rootMux.Handle("/", httpapi.NewServer(searchService, acquisitionService, logger).Handler())
+	apiServer := httpapi.NewServer(searchService, acquisitionService, logger)
+	// Keep liveness checks public, but apply the same bearer policy to every
+	// REST business route and the MCP transport. MCP_AUTH_TOKEN is retained as
+	// the legacy environment variable name for the shared service token.
+	rootMux.Handle("/healthz", apiServer.HealthHandler())
+	rootMux.Handle("/", auth.BearerAuth(apiServer.Handler(), authToken))
 	if cfg.MCPEnabled {
 		mcpHandler := mcpserver.NewHTTPHandler(mcpserver.NewServer(searchService, acquisitionService))
-		rootMux.Handle(cfg.MCPPath, mcpserver.BearerAuth(mcpHandler, cfg.MCPAuthToken))
-		if cfg.MCPAuthToken == "" {
-			logger.Printf("warning: MCP endpoint %s has no bearer token; protect it with a private network or reverse proxy", cfg.MCPPath)
+		rootMux.Handle(cfg.MCPPath, auth.BearerAuth(mcpHandler, authToken))
+		if authToken == "" {
+			logger.Printf("warning: authentication is explicitly disabled; REST and MCP business endpoints are unauthenticated")
 		}
 	}
 	server := &http.Server{
@@ -69,6 +84,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	acquisitionService.StartWorker(ctx, acquisition.WorkerOptions{})
 
 	go func() {
 		logger.Printf("listening on %s; search providers=%v; downloaders=%v; mcp=%v", cfg.HTTPAddr, searchService.ProviderNames(), acquisitionService.DownloaderNames(), cfg.MCPEnabled)
@@ -82,5 +98,8 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Printf("HTTP shutdown failed: %v", err)
+	}
+	if err := acquisitionService.WaitWorker(shutdownCtx); err != nil {
+		logger.Printf("worker shutdown failed: %v", err)
 	}
 }

@@ -8,10 +8,13 @@ import (
 )
 
 type Config struct {
-	HTTPAddr     string
-	MCPEnabled   bool
-	MCPPath      string
-	MCPAuthToken string
+	HTTPAddr      string
+	SQLitePath    string
+	MCPEnabled    bool
+	MCPPath       string
+	MCPAuthToken  string
+	AuthTokenFile string
+	AuthDisabled  bool
 
 	PansouBaseURL   string
 	ProwlarrBaseURL string
@@ -28,11 +31,18 @@ type Config struct {
 }
 
 func FromEnv() Config {
+	sqlitePath := strings.TrimSpace(os.Getenv("STORAGE_SQLITE_PATH"))
+	if sqlitePath == "" {
+		sqlitePath = env("SQLITE_PATH", "./data/mediadock.db")
+	}
 	return Config{
 		HTTPAddr:             env("HTTP_ADDR", ":8080"),
+		SQLitePath:           sqlitePath,
 		MCPEnabled:           boolEnv("MCP_ENABLED", true),
 		MCPPath:              normalizedPath(env("MCP_PATH", "/mcp")),
-		MCPAuthToken:         strings.TrimSpace(os.Getenv("MCP_AUTH_TOKEN")),
+		MCPAuthToken:         firstEnv("AUTH_TOKEN", "MCP_AUTH_TOKEN"),
+		AuthTokenFile:        env("AUTH_TOKEN_FILE", "./data/auth-token"),
+		AuthDisabled:         boolEnv("AUTH_DISABLED", false),
 		PansouBaseURL:        env("PANSOU_BASE_URL", ""),
 		ProwlarrBaseURL:      env("PROWLARR_BASE_URL", ""),
 		ProwlarrAPIKey:       env("PROWLARR_API_KEY", ""),
@@ -40,9 +50,11 @@ func FromEnv() Config {
 		TransmissionRPCURL:   env("TRANSMISSION_RPC_URL", "http://127.0.0.1:9091/transmission/rpc"),
 		TransmissionUser:     env("TRANSMISSION_USER", ""),
 		TransmissionPassword: env("TRANSMISSION_PASSWORD", ""),
-		IncomingDir:          env("DOWNLOAD_INCOMING_DIR", "./data/downloads/incoming"),
-		SearchTimeout:        durationEnv("SEARCH_TIMEOUT", 30*time.Second),
-		SearchTTL:            durationEnv("SEARCH_SESSION_TTL", 30*time.Minute),
+		// Empty means API-only acquisition: MediaDock does not need a local
+		// media volume and lets the downloader choose its own remote path.
+		IncomingDir:   env("DOWNLOAD_INCOMING_DIR", ""),
+		SearchTimeout: durationEnv("SEARCH_TIMEOUT", 30*time.Second),
+		SearchTTL:     durationEnv("SEARCH_SESSION_TTL", 30*time.Minute),
 	}
 }
 

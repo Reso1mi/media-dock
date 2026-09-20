@@ -9,6 +9,11 @@ services:
       - .env
     environment:
       HTTP_ADDR: ":8080"
-      DOWNLOAD_INCOMING_DIR: /downloads/incoming
+      STORAGE_SQLITE_PATH: /config/mediadock.db
+      AUTH_TOKEN_FILE: /config/auth-token
+      # Optional local-path mode. Leave unset for API-only acquisition.
+      # DOWNLOAD_INCOMING_DIR: /downloads/incoming
     volumes:
-      - ${MEDIA_DOWNLOADS_HOST_PATH:-./data/downloads}:/downloads
+      - ${MEDIA_CONFIG_HOST_PATH:-./data/config}:/config
+      # Add this only when DOWNLOAD_INCOMING_DIR is explicitly configured.
+      # - ${MEDIA_DOWNLOADS_HOST_PATH:-./data/downloads}:/downloads

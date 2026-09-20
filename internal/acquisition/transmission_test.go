@@ -48,9 +48,55 @@ func TestTransmissionNegotiatesSessionAndAddsTorrent(t *testing.T) {
 	}
 }
 
-func TestTransmissionDoesNotAcceptCloudCandidate(t *testing.T) {
+func TestTransmissionDoesNotAcceptNonTorrentHTTPOrCloudCandidates(t *testing.T) {
 	downloader := NewTransmissionDownloader("http://unused", "", "", nil)
-	if downloader.Supports(domain.Candidate{Kind: "cloud", RawURL: "https://115.example/share"}) {
-		t.Fatal("Transmission must not claim cloud-drive shares")
+	candidates := []domain.Candidate{
+		{Kind: domain.CandidateKindCloudShare, RawURL: "https://115.example/share"},
+		{Kind: domain.CandidateKindHTTPFile, RawURL: "https://media.example/video.mp4"},
+		{Kind: domain.CandidateKindUnknown, RawURL: "https://media.example/download?id=1"},
+	}
+	for _, candidate := range candidates {
+		if downloader.Supports(candidate) {
+			t.Fatalf("Transmission must not claim candidate kind %q", candidate.Kind)
+		}
+	}
+}
+
+func TestTransmissionMarksDuplicateTorrentAsExternal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":"success","arguments":{"torrent-duplicate":{"id":9,"hashString":"DUPLICATE"}}}`))
+	}))
+	defer server.Close()
+
+	downloader := NewTransmissionDownloader(server.URL, "", "", server.Client())
+	handle, err := downloader.Start(context.Background(), "job-1", domain.Candidate{
+		Kind: domain.CandidateKindMagnet, RawURL: "magnet:?xt=urn:btih:duplicate",
+	}, "")
+	if err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+	if handle.RemoteID != "DUPLICATE" || handle.Ownership != HandleOwnershipExternal {
+		t.Fatalf("unexpected duplicate handle: %#v", handle)
+	}
+}
+
+func TestTransmissionRejectsUnsuccessfulRPCResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":"not-found"}`))
+	}))
+	defer server.Close()
+
+	downloader := NewTransmissionDownloader(server.URL, "", "", server.Client())
+	_, err := downloader.Start(context.Background(), "job-1", domain.Candidate{
+		Kind:   domain.CandidateKindMagnet,
+		RawURL: "magnet:?xt=urn:btih:test",
+	}, "/downloads/incoming/job-1")
+	if err == nil {
+		t.Fatal("unsuccessful Transmission result was accepted")
+	}
+	if got := err.Error(); got != `transmission RPC torrent-add failed: result "not-found"` {
+		t.Fatalf("unexpected error: %q", got)
 	}
 }

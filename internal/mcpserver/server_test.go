@@ -49,6 +49,7 @@ func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
 		"media_acquire":      false,
 		"media_job_status":   false,
 		"media_job_cancel":   false,
+		"media_jobs_list":    false,
 		"media_capabilities": false,
 	}
 	for _, tool := range tools.Tools {
@@ -78,6 +79,16 @@ func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
 		t.Fatalf("transport = %q, want streamable-http", capabilityOutput.Transport)
 	}
 
+	jobsResult := callTool(t, ctx, session, "media_jobs_list", map[string]any{"limit": 10})
+	if jobsResult.IsError {
+		t.Fatalf("media_jobs_list returned an MCP tool error: %s", contentText(jobsResult))
+	}
+	var jobsOutput JobsListOutput
+	decodeToolOutput(t, jobsResult, &jobsOutput)
+	if jobsOutput.Limit != 10 || jobsOutput.Offset != 0 {
+		t.Fatalf("unexpected jobs list output: %#v", jobsOutput)
+	}
+
 	searchResult := callTool(t, ctx, session, "media_search", map[string]any{
 		"query":   "信号",
 		"quality": "1080p",
@@ -105,6 +116,17 @@ func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
 	})
 	if !unconfirmed.IsError {
 		t.Fatal("media_acquire unexpectedly accepted an unconfirmed candidate")
+	}
+	var acquisitionError struct {
+		Code       string `json:"code"`
+		Retryable  bool   `json:"retryable"`
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal([]byte(contentText(unconfirmed)), &acquisitionError); err != nil {
+		t.Fatalf("decode structured acquisition error: %v; text=%s", err, contentText(unconfirmed))
+	}
+	if acquisitionError.Code != "confirmation_required" || acquisitionError.Retryable || acquisitionError.NextAction == "" {
+		t.Fatalf("unexpected acquisition error: %#v", acquisitionError)
 	}
 	if downloader.StartCalls() != 0 {
 		t.Fatal("downloader was called before explicit confirmation")

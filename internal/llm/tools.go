@@ -41,8 +41,9 @@ func Definitions() []ToolDefinition {
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"candidate_id": map[string]any{"type": "string"},
-						"confirmed":    map[string]any{"type": "boolean", "description": "用户是否明确确认该候选资源"},
+						"candidate_id":    map[string]any{"type": "string"},
+						"confirmed":       map[string]any{"type": "boolean", "description": "用户是否明确确认该候选资源"},
+						"idempotency_key": map[string]any{"type": "string", "description": "重试同一获取请求时复用的稳定键"},
 					},
 					"required": []string{"candidate_id", "confirmed"},
 				},
@@ -69,6 +70,21 @@ func Definitions() []ToolDefinition {
 					"type":       "object",
 					"properties": map[string]any{"job_id": map[string]any{"type": "string"}},
 					"required":   []string{"job_id"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSchema{
+				Name:        "media_jobs_list",
+				Description: "分页查找近期、进行中或失败的资源获取任务，适合聊天中断后重新发现任务。",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+						"offset":   map[string]any{"type": "integer", "minimum": 0},
+						"statuses": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
 				},
 			},
 		},

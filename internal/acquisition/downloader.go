@@ -6,8 +6,16 @@ import (
 	"github.com/Reso1mi/media-dock/internal/domain"
 )
 
+type HandleOwnership string
+
+const (
+	HandleOwnershipManaged  HandleOwnership = "managed"
+	HandleOwnershipExternal HandleOwnership = "external"
+)
+
 type Handle struct {
-	RemoteID string
+	RemoteID  string
+	Ownership HandleOwnership
 }
 
 type RemoteStatus struct {
