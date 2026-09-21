@@ -728,6 +728,75 @@ h2 {
   font-size: 0.72rem;
 }
 
+.candidate-source {
+  margin-top: 1rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(109, 168, 255, 0.18);
+  border-radius: 9px;
+  background: rgba(109, 168, 255, 0.05);
+}
+
+.candidate-source-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.7rem;
+}
+
+.candidate-source-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: start;
+  gap: 0.7rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid rgba(174, 190, 225, 0.1);
+}
+
+.candidate-source-label {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.candidate-source-value {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.candidate-source-url,
+.candidate-source-password {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.candidate-source-url {
+  color: var(--blue);
+}
+
+.candidate-source-password {
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.candidate-source-empty,
+.candidate-source-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.candidate-source-note {
+  margin-top: 0.65rem;
+}
+
 .candidate-note {
   margin: 0.85rem 0 0;
   padding: 0.65rem 0.75rem;
@@ -1028,6 +1097,11 @@ h2 {
 
   .candidate-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .candidate-source-row {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
   }
 
   .candidate-actions {

@@ -376,7 +376,95 @@
     return item;
   }
 
-  function renderSearchOverview(result) {
+  function sourceProtocol(rawURL) {
+    const match = String(rawURL || "").match(/^([a-z][a-z0-9+.-]*):/i);
+    return match ? match[1].toLowerCase() : "";
+  }
+
+  async function copySourceValue(value) {
+    if (!value) {
+      return;
+    }
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(value);
+      showToast("原始内容已复制");
+    } catch (_error) {
+      showToast("浏览器禁止自动复制，请手动选择内容复制。", true);
+    }
+  }
+
+  function renderOriginalSource(candidate, source, sourceError) {
+    const panel = node("section", "candidate-source");
+    const heading = node("div", "candidate-source-heading");
+    heading.append(node("strong", "", "原始搜索结果"));
+    heading.append(kindBadge(formatKind(candidate.kind)));
+    panel.append(heading);
+
+    if (sourceError) {
+      panel.append(node("p", "candidate-source-empty", `原始来源加载失败：${sourceError}`));
+      return panel;
+    }
+    if (!source || !source.raw_url) {
+      panel.append(node("p", "candidate-source-empty", "搜索源没有提供可展示的原始链接。"));
+      return panel;
+    }
+
+    const linkRow = node("div", "candidate-source-row");
+    linkRow.append(node("span", "candidate-source-label", "原始链接"));
+    const linkValue = node("div", "candidate-source-value");
+    const protocol = sourceProtocol(source.raw_url);
+    if (["http", "https", "magnet"].includes(protocol)) {
+      const link = document.createElement("a");
+      link.className = "candidate-source-url";
+      link.href = source.raw_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = source.raw_url;
+      linkValue.append(link);
+    } else {
+      linkValue.append(node("span", "candidate-source-url", source.raw_url));
+    }
+    const copyLink = node("button", "button button-ghost button-small", "复制");
+    copyLink.type = "button";
+    copyLink.addEventListener("click", () => copySourceValue(source.raw_url));
+    linkValue.append(copyLink);
+    linkRow.append(linkValue);
+    panel.append(linkRow);
+
+    if (source.password) {
+      const passwordRow = node("div", "candidate-source-row");
+      passwordRow.append(node("span", "candidate-source-label", "分享密码"));
+      const passwordValue = node("div", "candidate-source-value");
+      passwordValue.append(node("code", "candidate-source-password", source.password));
+      const copyPassword = node("button", "button button-ghost button-small", "复制");
+      copyPassword.type = "button";
+      copyPassword.addEventListener("click", () => copySourceValue(source.password));
+      passwordValue.append(copyPassword);
+      passwordRow.append(passwordValue);
+      panel.append(passwordRow);
+    }
+    if (source.source_type) {
+      const typeRow = node("div", "candidate-source-row");
+      typeRow.append(
+        node("span", "candidate-source-label", "来源类型"),
+        node("span", "candidate-source-value", source.source_type),
+      );
+      panel.append(typeRow);
+    }
+    panel.append(
+      node(
+        "p",
+        "candidate-source-note",
+        "这是仅对已认证 WebUI 展示的原始来源；链接可能只能在对应网络环境中访问。",
+      ),
+    );
+    return panel;
+  }
+
+  function renderSearchOverview(result, sourceError) {
     const overview = $("#search-overview");
     clear(overview);
     overview.classList.remove("hidden");
@@ -455,8 +543,11 @@
     overview.append(healthGrid);
 
     const warnings = Array.isArray(result && result.warnings)
-      ? result.warnings
+      ? [...result.warnings]
       : [];
+    if (sourceError) {
+      warnings.push(`原始来源加载失败：${sourceError}`);
+    }
     if (warnings.length) {
       const warningBox = node("div", "search-warnings");
       warningBox.append(node("strong", "", "搜索提示"));
@@ -506,8 +597,9 @@
     }
   }
 
-  function renderCandidates(result) {
-    renderSearchOverview(result);
+  function renderCandidates(result, sourceDetails, sourceError) {
+    renderSearchOverview(result, sourceError);
+    const sourceMap = new Map((Array.isArray(sourceDetails) ? sourceDetails : []).map((source) => [source.candidate_id, source]));
     const list = $("#search-results");
     clear(list);
     const candidates = Array.isArray(result && result.candidates) ? result.candidates : [];
@@ -583,6 +675,7 @@
         ),
       );
       card.append(detailPanel);
+      card.append(renderOriginalSource(candidate, sourceMap.get(candidate.id), sourceError));
 
       if (!acquisition.available) {
         card.append(node("p", "candidate-note", `暂不可获取：${acquisitionReason(acquisition.reason)}`));
@@ -616,7 +709,19 @@
     setSearchStatus("正在查询已配置的搜索组件…");
     try {
       const result = await api("/api/v1/search", { method: "POST", body });
-      renderCandidates(result);
+      let sourceDetails = [];
+      let sourceError = "";
+      try {
+        const sourcePayload = await api(
+          `/api/v1/searches/${encodeURIComponent(result.search_id)}/sources`,
+        );
+        sourceDetails = Array.isArray(sourcePayload && sourcePayload.sources)
+          ? sourcePayload.sources
+          : [];
+      } catch (error) {
+        sourceError = error.message;
+      }
+      renderCandidates(result, sourceDetails, sourceError);
       const count = Array.isArray(result && result.candidates) ? result.candidates.length : 0;
       setSearchStatus(`找到 ${count} 个候选，搜索会话有效期至 ${formatDate(result && result.expires_at)}。`);
     } catch (error) {

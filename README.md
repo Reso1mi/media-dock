@@ -159,7 +159,7 @@ DELETE /mcp
 
 `GET /api/v1/capabilities` 提供与 `media_capabilities` 对应的 REST 能力说明；`GET /api/v1/llm/tools` 是兼容旧客户端的 OpenAI 风格函数定义发现接口，不是 MCP 协议实现。
 
-LLM 不直接执行 shell、访问原始分享链接或操作文件系统。它只使用候选 ID 和任务 ID，真实材料只在服务内部交给对应适配器。候选类型会区分 `magnet`、`torrent`、`http_file`、`cloud_share` 和 `unknown`；未知的普通 HTTP 地址不会被 Transmission 宣称为可获取。
+LLM 不直接执行 shell、访问原始分享链接或操作文件系统。普通搜索响应和 MCP 只使用候选 ID 和任务 ID，真实材料只在服务内部交给对应适配器；已认证的人工 WebUI 可以通过 `GET /api/v1/searches/{id}/sources` 在当前搜索列表中查看原始链接和分享密码。候选类型会区分 `magnet`、`torrent`、`http_file`、`cloud_share` 和 `unknown`；未知的普通 HTTP 地址不会被 Transmission 宣称为可获取。
 
 `media_acquire` 的副作用边界由两层共同保证：MCP 工具说明要求先展示候选并取得用户明确选择，应用服务还会强制校验 `confirmed: true`。即使调用方绕过 MCP 直接访问 REST 接口，也不能跳过确认门。
 
@@ -171,6 +171,6 @@ LLM 不直接执行 shell、访问原始分享链接或操作文件系统。它�
 2. 真实组件健康检查，区分未配置、就绪、不可达、未授权和不兼容；
 3. 候选 TTL 清理、数据库迁移/备份和更完整的任务事件记录；
 4. 补充 Transmission/Prowlarr/PanSou 契约测试，再增加 qBittorrent 和通用搜索适配器；
-5. 在不把密钥写入网页的前提下，扩展 WebUI 的连接诊断和配置引导。
+5. 在不把组件 API 密钥或服务凭据写入网页的前提下，扩展 WebUI 的连接诊断和配置引导。
 
 完整架构说明见 [`docs/architecture.md`](docs/architecture.md)。

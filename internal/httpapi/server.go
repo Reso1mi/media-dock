@@ -56,6 +56,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/llm/tools", s.handleTools)
 	s.mux.HandleFunc("POST /api/v1/search", s.handleSearch)
 	s.mux.HandleFunc("GET /api/v1/searches/{id}", s.handleGetSearch)
+	s.mux.HandleFunc("GET /api/v1/searches/{id}/sources", s.handleSearchSources)
 	s.mux.HandleFunc("POST /api/v1/acquisitions", s.handleAcquire)
 	s.mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}", s.handleGetJob)
@@ -132,6 +133,47 @@ func (s *Server) handleGetSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, searchResponse(session, s.acquisition))
+}
+
+// handleSearchSources is intentionally separate from searchResponse: the
+// human-facing WebUI may show the original source URL and share password, but
+// normal search responses and MCP output must keep those private fields hidden.
+func (s *Server) handleSearchSources(w http.ResponseWriter, r *http.Request) {
+	session, err := s.search.GetSearch(r.PathValue("id"))
+	if err != nil {
+		status := http.StatusNotFound
+		if strings.Contains(err.Error(), "expired") {
+			status = http.StatusGone
+		}
+		writeError(w, status, "search_not_found", err.Error())
+		return
+	}
+
+	sources := make([]map[string]any, 0, len(session.Candidates))
+	for _, candidate := range session.Candidates {
+		sourceType := ""
+		if candidate.RawPayload != nil {
+			if value, ok := candidate.RawPayload["link_type"].(string); ok {
+				sourceType = value
+			}
+		}
+		sources = append(sources, map[string]any{
+			"candidate_id": candidate.ID,
+			"title":        candidate.Title,
+			"provider":     candidate.Provider,
+			"source_name":  candidate.SourceName,
+			"source_type":  sourceType,
+			"kind":         candidate.Kind,
+			"raw_url":      candidate.RawURL,
+			"password":     candidate.Password,
+			"published_at": candidate.PublishedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"search_id":  session.ID,
+		"expires_at": session.ExpiresAt,
+		"sources":    sources,
+	})
 }
 
 type acquireRequest struct {

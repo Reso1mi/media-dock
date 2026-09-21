@@ -25,6 +25,7 @@ func (apiFakeProvider) Search(context.Context, domain.SearchRequest) ([]domain.C
 		Kind:     "magnet",
 		Title:    "信号 2016 1080p 简中",
 		RawURL:   "magnet:?xt=urn:btih:private",
+		Password: "share-code",
 	}}, nil
 }
 
@@ -61,6 +62,45 @@ func TestSearchAPIHidesRawCandidatePayloadAndRequiresConfirmation(t *testing.T) 
 	server.Handler().ServeHTTP(acquireResponse, acquireRequest)
 	if acquireResponse.Code != http.StatusPreconditionRequired {
 		t.Fatalf("unconfirmed acquisition returned %d: %s", acquireResponse.Code, acquireResponse.Body.String())
+	}
+}
+
+func TestSearchSourcesEndpointReturnsRawSourceForWebUI(t *testing.T) {
+	memoryStore := store.NewMemoryStore()
+	searchService := search.NewService(memoryStore, []search.Provider{apiFakeProvider{}}, time.Second, time.Minute)
+	acquisitionService := acquisition.NewService(memoryStore, nil, t.TempDir())
+	server := NewServer(searchService, acquisitionService, nil)
+
+	searchRequest := httptest.NewRequest(http.MethodPost, "/api/v1/search", bytes.NewBufferString(`{"query":"信号"}`))
+	searchResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(searchResponse, searchRequest)
+	if searchResponse.Code != http.StatusOK {
+		t.Fatalf("search returned %d: %s", searchResponse.Code, searchResponse.Body.String())
+	}
+	var searchPayload struct {
+		SearchID   string `json:"search_id"`
+		Candidates []struct {
+			ID string `json:"id"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(searchResponse.Body.Bytes(), &searchPayload); err != nil {
+		t.Fatalf("decode search response: %v", err)
+	}
+	if searchPayload.SearchID == "" || len(searchPayload.Candidates) != 1 {
+		t.Fatalf("unexpected search response: %#v", searchPayload)
+	}
+	if bytes.Contains(searchResponse.Body.Bytes(), []byte("private")) || bytes.Contains(searchResponse.Body.Bytes(), []byte("share-code")) {
+		t.Fatal("raw source leaked through the normal search response")
+	}
+
+	sourceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/searches/"+searchPayload.SearchID+"/sources", nil)
+	sourceResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(sourceResponse, sourceRequest)
+	if sourceResponse.Code != http.StatusOK {
+		t.Fatalf("sources returned %d: %s", sourceResponse.Code, sourceResponse.Body.String())
+	}
+	if !bytes.Contains(sourceResponse.Body.Bytes(), []byte("magnet:?xt=urn:btih:private")) || !bytes.Contains(sourceResponse.Body.Bytes(), []byte("share-code")) {
+		t.Fatalf("raw source details missing: %s", sourceResponse.Body.String())
 	}
 }
 

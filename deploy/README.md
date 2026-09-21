@@ -160,7 +160,7 @@ PANSOU_BASE_URL=http://pansou:8888
 
 当前完整 Compose 的 `AUTH_ENABLED=false` 是有意设置的兼容选项：MediaDock 直接调用 PanSou `/api/search`，尚未执行 PanSou JWT 登录。请保持 PanSou 端口只绑定到本机，除非先为适配器补上认证支持。
 
-PanSou 的网盘候选目前可以搜索和展示，但 qBittorrent 不会获取 `cloud_share` 类型候选。要获取这类网盘资源，需要未来单独接入网盘转存/下载适配器。
+PanSou 的网盘候选目前可以搜索和展示，但 qBittorrent 不会获取 `cloud_share` 类型候选。要获取这类网盘资源，需要未来单独接入网盘转存/下载适配器。MediaDock WebUI 会在每条候选的“原始搜索结果”区域显示原始分享链接和分享密码，供已认证的人工用户复制或打开；MCP 和普通搜索响应仍保持脱敏。
 
 ## 6. 使用 MediaDock WebUI
 
