@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -163,13 +164,7 @@ func (s *Service) Capabilities() (domain.AcquisitionCapabilities, []domain.Compo
 	}
 	unavailable := make([]domain.UnavailableKind, 0)
 	for _, kind := range knownKinds {
-		found := false
-		for _, supportedKind := range supported {
-			if supportedKind == kind {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(supported, kind)
 		if !found {
 			reason := "unsupported_kind"
 			if len(s.downloaders) == 0 {
