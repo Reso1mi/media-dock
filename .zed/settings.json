@@ -1,0 +1,6 @@
+{
+  "format_on_save": "on",
+  "file_types": {
+    "JSON": ["*.json"],
+  },
+}
