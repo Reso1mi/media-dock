@@ -25,6 +25,10 @@ type Config struct {
 	TransmissionUser     string
 	TransmissionPassword string
 
+	QBittorrentURL      string
+	QBittorrentUser     string
+	QBittorrentPassword string
+
 	IncomingDir   string
 	SearchTimeout time.Duration
 	SearchTTL     time.Duration
@@ -50,6 +54,9 @@ func FromEnv() Config {
 		TransmissionRPCURL:   env("TRANSMISSION_RPC_URL", "http://127.0.0.1:9091/transmission/rpc"),
 		TransmissionUser:     env("TRANSMISSION_USER", ""),
 		TransmissionPassword: env("TRANSMISSION_PASSWORD", ""),
+		QBittorrentURL:       env("QBITTORRENT_URL", "http://127.0.0.1:8080"),
+		QBittorrentUser:      env("QBITTORRENT_USER", "admin"),
+		QBittorrentPassword:  env("QBITTORRENT_PASSWORD", ""),
 		// Empty means API-only acquisition: MediaDock does not need a local
 		// media volume and lets the downloader choose its own remote path.
 		IncomingDir:   env("DOWNLOAD_INCOMING_DIR", ""),

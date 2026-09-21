@@ -1,0 +1,76 @@
+name: mediadock
+
+services:
+  media-dock:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - pansou
+      - prowlarr
+      - qbittorrent
+    ports:
+      - "127.0.0.1:${MEDIADOCK_HTTP_PORT:-8080}:8080"
+    env_file:
+      - ./mediadock.env
+    environment:
+      HTTP_ADDR: ":8080"
+      STORAGE_SQLITE_PATH: /config/mediadock.db
+      AUTH_TOKEN_FILE: /config/auth-token
+      PANSOU_BASE_URL: ${PANSOU_BASE_URL:-http://pansou:8888}
+      PROWLARR_BASE_URL: ${PROWLARR_BASE_URL:-http://prowlarr:9696}
+      QBITTORRENT_URL: ${QBITTORRENT_URL:-http://qbittorrent:8080}
+    volumes:
+      - ../data/config:/config
+
+  pansou:
+    image: ghcr.io/fish2018/pansou:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PANSOU_HTTP_PORT:-8888}:8888"
+    environment:
+      PORT: "8888"
+      # MediaDock's current PanSou adapter does not implement PanSou JWT login.
+      # Keep this API local/internal; do not expose it directly to the LAN.
+      AUTH_ENABLED: "false"
+      CACHE_ENABLED: "true"
+      CACHE_PATH: /app/cache
+      ASYNC_PLUGIN_ENABLED: "true"
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ../data/pansou-cache:/app/cache
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PROWLARR_HTTP_PORT:-9696}:9696"
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ../data/prowlarr:/config
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${QBITTORRENT_HTTP_PORT:-8081}:8080"
+      - "${QBITTORRENT_TORRENT_PORT:-6881}:6881"
+      - "${QBITTORRENT_TORRENT_PORT:-6881}:6881/udp"
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Asia/Shanghai}
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "6881"
+    volumes:
+      - ../data/qbittorrent:/config
+      - ../data/downloads:/downloads
+      - ./qbittorrent-init:/custom-cont-init.d:ro
+
+networks:
+  default:
+    name: mediadock

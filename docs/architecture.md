@@ -30,7 +30,7 @@ MediaDock 是面向 AI 的轻量媒体组件编排服务。它通过 MCP 暴露�
 ┌───────────────▼────────┐ ┌──────▼────────────┐
 │ Search Providers        │ │ Downloaders       │
 │ PanSou / Prowlarr       │ │ 可配置适配器       │
-│ 后续可接更多索引器       │ │ Transmission/...  │
+│ 后续可接更多索引器       │ │ Transmission/qBit │
 └────────────────────────┘ └───────────────────┘
                 │                 │
                 └────────┬────────┘
@@ -132,18 +132,20 @@ type Downloader interface {
 }
 ```
 
-当前实现 Transmission：
+当前实现 Transmission 和 qBittorrent：
 
-- 通过 `torrent-add` 添加 magnet 或明确的 torrent 地址；
-- 处理 Transmission 的 409 session challenge，并校验 RPC `result` 必须为 `success`；
-- 通过 `torrent-get` 查询进度；
-- 通过 `torrent-remove` 取消任务；
-- 配置本地临时目录时使用 `DOWNLOAD_INCOMING_DIR/<job_id>`，留空时不发送 `download-dir`，进入 API-only 模式。
+- Transmission 通过 `torrent-add` 添加 magnet 或明确的 torrent 地址；
+- Transmission 处理 409 session challenge，并校验 RPC `result` 必须为 `success`；
+- qBittorrent 通过 Web API 登录、添加磁力、查询 info hash 状态并取消任务；
+- 两种适配器都会区分 MediaDock 自己创建的任务和下载器原有任务；
+- qBittorrent 第一版只声明支持可解析 info hash 的磁力链接，普通 `.torrent` URL 不会被误报为可获取；
+- 配置本地临时目录时使用 `DOWNLOAD_INCOMING_DIR/<job_id>`；留空时不发送下载目录，进入 API-only 模式。
 
 下载器不是必选组件。通过 `DOWNLOADERS` 使用逗号分隔的名称启用，例如：
 
 ```text
-DOWNLOADERS=transmission
+DOWNLOADERS=qbittorrent
+# 或：DOWNLOADERS=transmission,qbittorrent
 ```
 
 留空时服务运行在搜索模式；`/api/v1/downloaders` 可查看实际启用的适配器。未知名称只会记录警告并忽略，不会阻止搜索服务启动。
@@ -190,11 +192,11 @@ downloaded
 
 ## 为什么先做模块化单体
 
-当前部署目标是单用户 NAS，搜索、获取和后续媒体整理之间需要共享候选句柄和任务状态。第一阶段使用一个 Go 服务加后台 Worker 更合适；默认获取只调用下载器 API，不要求 MediaDock 挂载媒体盘：
+当前部署目标是单用户 NAS，搜索、获取和后续媒体整理之间需要共享候选句柄和任务状态。第一阶段使用一个 Go 服务、SQLite 和后台 Worker 更合适；默认获取只调用下载器 API，不要求 MediaDock 挂载媒体盘：
 
 - 调试链路短；
 - 适合 Docker Compose 部署；
 - provider 和 downloader 已经通过接口隔离；
-- 将内存 Store 替换为 SQLite/PostgreSQL 后，仍可保持相同业务边界。
+- 将来从 SQLite 迁移到其他存储实现时，仍可保持相同业务边界。
 
 没有必要在搜索平台尚未稳定之前拆成多个微服务。

@@ -203,7 +203,7 @@ func (s *Service) Capabilities() (domain.AcquisitionCapabilities, []domain.Compo
 
 func capabilityCandidate(kind string) domain.Candidate {
 	values := map[string]string{
-		domain.CandidateKindMagnet:     "magnet:?xt=urn:btih:capability",
+		domain.CandidateKindMagnet:     "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
 		domain.CandidateKindTorrent:    "https://example.invalid/capability.torrent",
 		domain.CandidateKindHTTPFile:   "https://example.invalid/capability.mp4",
 		domain.CandidateKindCloudShare: "https://example.invalid/share",
@@ -506,6 +506,8 @@ func (s *Service) Get(ctx context.Context, jobID string) (domain.AcquisitionJob,
 			switch status.Status {
 			case "completed", "seeding":
 				current.Status = domain.JobDownloaded
+			case "failed", "error":
+				current.Status = domain.JobFailed
 			case "downloading", "checking", "checking_wait", "download_wait", "seed_wait":
 				current.Status = domain.JobDownloading
 			case "stopped":

@@ -22,32 +22,51 @@
 - 候选资源统一模型、去重、质量/字幕/做种评分；
 - 候选资源句柄隔离：API 不返回原始分享链接、密码和 provider payload；
 - 用户确认门：没有 `confirmed: true` 不会创建获取任务；
-- 可配置的下载器适配器；当前包含 Transmission RPC，仅声明支持磁力和明确的 torrent 材料；
+- 可配置的下载器适配器；当前包含 Transmission RPC 和 qBittorrent Web API，并对不同资源类型准确声明支持范围；
 - 标准 MCP Server：官方 Go SDK + Streamable HTTP，端点为 `/mcp`；
 - MCP 工具：`media_search`、`media_acquire`、`media_job_status`、`media_job_cancel`、`media_jobs_list`、`media_capabilities`；
+- 内嵌轻量 WebUI：概览能力、搜索候选、确认获取、查看和取消任务，入口为 `/`；
 - 保留 OpenAI 风格工具定义接口，兼容暂未支持 MCP 的旧客户端；
+- SQLite 持久化候选和任务，进程内 Worker 支持后台提交、状态追踪和重启后的保守恢复；
 - 单元测试、官方 SDK 客户端协议测试和 Docker 镜像构建文件。
 
-当前搜索和任务状态使用内存存储，服务重启后会丢失搜索候选和任务记录。这是第一条垂直链路，下一步应替换为 SQLite。获取链路支持 API-only 模式：未配置 `DOWNLOAD_INCOMING_DIR` 时，MediaDock 不要求挂载本地媒体盘，由远端下载器决定目标目录。
+MediaDock 默认使用本机 SQLite 保存搜索候选和任务记录，服务重启后不会丢失有效状态。获取链路支持 API-only 模式：未配置 `DOWNLOAD_INCOMING_DIR` 时，MediaDock 不要求挂载本地媒体盘，由远端下载器决定目标目录。
 
 ## 快速启动
 
-```powershell
-Copy-Item .env.example .env
-$env:PANSOU_BASE_URL = "http://127.0.0.1:80"
-$env:AUTH_DISABLED = "true" # 仅本地开发；生产环境使用 AUTH_TOKEN_FILE
-$env:DOWNLOADERS = "transmission"
-$env:TRANSMISSION_RPC_URL = "http://127.0.0.1:9091/transmission/rpc"
+### 直接运行（macOS/Linux）
+
+```sh
+cp .env.example .env
+# 编辑 .env 配置已部署的 PanSou、Prowlarr 和/或 Transmission 地址。
+# 仅本地开发时可以设置 AUTH_DISABLED=true；生产环境请使用默认生成的 token。
+set -a
+. ./.env
+set +a
 go run ./cmd/media-dock
 ```
 
+即使没有配置任何外部组件，MediaDock 也可以启动为搜索/获取能力为空的核心服务；完整链路需要配置可达的 provider 和 downloader。
+
+### Docker Compose
+
+Docker Desktop 启动后：
+
+```sh
+cp .env.example .env
+# 在 .env 中填写组件地址；本地开发可临时设置 AUTH_DISABLED=true
+docker compose up --build
+```
+
+Compose 默认只构建和启动 MediaDock，数据保存在 `./data/config`，容器内对应 `/config`。PanSou、Prowlarr、Transmission 不会被自动安装，需单独部署或在另一个 Compose 项目中运行，再将容器实际可达的地址写入 `.env`。
+
+如果希望在本机一次启动 PanSou、Prowlarr 和 qBittorrent，请使用 [`deploy/README.md`](deploy/README.md) 与 [`deploy/docker-compose.full.yml`](deploy/docker-compose.full.yml)；它们是完整本地验证栈，默认只把管理端口绑定到 `127.0.0.1`。
+
 检查服务：
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/healthz
-Invoke-RestMethod http://127.0.0.1:8080/api/v1/providers
-Invoke-RestMethod http://127.0.0.1:8080/api/v1/downloaders
-Invoke-RestMethod http://127.0.0.1:8080/api/v1/llm/tools
+```sh
+curl http://127.0.0.1:8080/healthz
+# 浏览器访问 http://127.0.0.1:8080/
 ```
 
 标准 MCP 客户端连接：
@@ -55,6 +74,8 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/llm/tools
 ```text
 http://127.0.0.1:8080/mcp
 ```
+
+WebUI 入口为 `http://127.0.0.1:8080/`。首次进入时在右上角输入 `AUTH_TOKEN_FILE` 对应文件中的 token；仅在显式开发模式 `AUTH_DISABLED=true` 时可以留空。WebUI 只调用已有 REST 接口，不提供任意 URL、Shell 或容器管理能力。
 
 REST 业务接口和 MCP 端点都需要发送 `Authorization: Bearer <token>`；`/healthz` 仅作为公开存活探针。服务默认生成并持久化 token（推荐设置 `AUTH_TOKEN_FILE`）；只有显式设置 `AUTH_DISABLED=true` 才进入无认证开发模式。`MCP_AUTH_TOKEN` 仍作为兼容的固定 token 配置。MCP 客户端负责执行标准的 `initialize`、`tools/list` 和 `tools/call`，不需要再调用下面的 REST 工具定义接口。
 
@@ -109,11 +130,13 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/jobs/job_xxx
 | `DOWNLOADERS`                                 | 可选，逗号分隔的下载器名称；留空表示搜索模式                                       |
 | `TRANSMISSION_RPC_URL`                        | Transmission RPC 地址                                                              |
 | `TRANSMISSION_USER` / `TRANSMISSION_PASSWORD` | Transmission 认证                                                                  |
+| `QBITTORRENT_URL`                             | qBittorrent Web API 地址；当前适配器追踪磁力链接                                   |
+| `QBITTORRENT_USER` / `QBITTORRENT_PASSWORD`   | qBittorrent WebUI/API 认证                                                         |
 | `DOWNLOAD_INCOMING_DIR`                       | 可选的本地下载临时目录；留空时使用 API-only 模式，不要求 MediaDock 挂载媒体盘      |
 
 只有配置了 `DOWNLOAD_INCOMING_DIR` 时，服务和 Transmission 才必须使用双方共享卷中的同一个容器路径；不能直接使用宿主机路径替代容器内路径。默认 API-only 模式不需要该目录。
 
-`DOWNLOADERS` 留空时服务仍可正常搜索，但确认获取会返回 `downloader_unavailable`。这样可以先部署搜索平台，再按需启用下载器。后续新增 OpenList、aria2 等适配器时，只需增加适配器并在此配置中启用。
+`DOWNLOADERS` 留空时服务仍可正常搜索，但确认获取会返回 `downloader_unavailable`。当前可启用 `transmission` 或 `qbittorrent`；qBittorrent 适配器第一版只支持带有可解析 info hash 的磁力链接，普通 `.torrent` URL 会保持不可获取。这样可以先部署搜索平台，再按需启用下载器。后续新增 OpenList、aria2 等适配器时，只需增加适配器并在此配置中启用。
 
 ## LLM 接口边界
 
@@ -144,10 +167,10 @@ LLM 不直接执行 shell、访问原始分享链接或操作文件系统。它�
 
 按用户需求，后续优先级是：
 
-1. 引入 SQLite 存储搜索会话、候选、任务和事件；
-2. 增加进程内后台追踪、幂等和任务归属；
-3. 完善能力发现、统一错误模型和任务列表；
-4. 支持结构化连接配置与诊断命令；
-5. 再按需求增加 qBittorrent、通用搜索或其他媒体服务适配器。
+1. 结构化 YAML 配置、`*_file` 凭据读取和旧环境变量迁移；
+2. 真实组件健康检查，区分未配置、就绪、不可达、未授权和不兼容；
+3. 候选 TTL 清理、数据库迁移/备份和更完整的任务事件记录；
+4. 补充 Transmission/Prowlarr/PanSou 契约测试，再增加 qBittorrent 和通用搜索适配器；
+5. 在不把密钥写入网页的前提下，扩展 WebUI 的连接诊断和配置引导。
 
 完整架构说明见 [`docs/architecture.md`](docs/architecture.md)。

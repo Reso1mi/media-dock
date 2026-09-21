@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>MediaDock</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#dashboard" data-view-link="dashboard">
+        <span class="brand-mark">M</span>
+        <span>
+          <strong>MediaDock</strong>
+          <small>媒体组件编排网关</small>
+        </span>
+      </a>
+      <nav class="main-nav" aria-label="主导航">
+        <button class="nav-link active" type="button" data-view-link="dashboard">概览</button>
+        <button class="nav-link" type="button" data-view-link="search">搜索</button>
+        <button class="nav-link" type="button" data-view-link="jobs">任务</button>
+        <button class="nav-link" type="button" data-view-link="access">接入</button>
+      </nav>
+      <div class="topbar-actions">
+        <span class="connection-indicator" id="connection-indicator"><i></i><span></span>检查中</span></span>
+        <button class="button button-ghost button-small" id="token-button" type="button">设置令牌</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="view active" id="view-dashboard" data-view="dashboard">
+        <div class="page-heading">
+          <div>
+            <</div>p class="eyebrow">运营概览</p>
+            <h1></h1>组件状态</h1>
+            <p class="muted">查看当前部署实际暴露的搜索与获取能力。组件连接配置仍由运行环境管理。</p>
+          </div>
+          <button class="button button-secondary" id="refresh-dashboard" type="button">刷新状态</button>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card accent-blue">
+            <span class="stat-label">运行模式</span>
+            <strong id="capability-mode">—</strong>
+            <small id="health-detail">等待检查</small>
+          </article>
+          <article class="stat-card accent-violet">
+            <span class="stat-label">搜索组件</span>
+            <strong id="provider-count">—</strong>
+            <small>已配置</small>的 provider</small>
+          </article>
+          <article class="stat-card accent-green">
+            <span class="stat-label">下载器</span>
+            <strong id="downloader-count">—</strong>
+            <small>可用于获取的适配</small>器</small>
+          </article>
+          <article class="stat-card accent-orange">
+            <span class="stat-label">确认策略</span>
+            <strong id="confirmation-policy">—</strong>
+            <small></small>获取前需要明确确认</small>
+          </article>
+        </div>
+
+        <div class="two-column">
+          <article class="panel">
+            <div class="panel-heading">
+              <div></div>
+                <h2>搜索</h2>组件</h2>
+                <p class="muted">连接状态由能力接口提供。</p>
+              </div>
+            </div>
+            <div class="component-list" id="provider-list">
+              <div class="empty-state">尚未读取能力信息</div>
+            </div>
+          </article>
+          <article class="panel">
+            <div class="panel-heading">
+              <div></div>
+                <h2>获取</h2>能力</h2>
+                <p class="muted">普通 HTTP 地址不会被误判为 torrent。</p>
+              </div>
+            </div>
+            <div class="capability-summary" id="acquisition-summary">
+              <div class="empty-state">尚未读取能力信息</div>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel policy-panel">
+          <div class="panel-heading">
+            <div>
+              <</div>h2>当前策略</h2>
+              <p class="muted">MediaDock 不会因为 WebUI 操作而接管外部任务或删除文件。</p>
+            </div>
+          </div>
+          <div class="policy-list" id="policy-list"></div>
+        </article>
+      </section>
+
+      <section class="view" id="view-search" data-view="search">
+        <div class="page-heading">
+          <div>
+            <</div>p class="eyebrow">候选搜索</p>
+            <h1>搜索</h1>媒体资源</h1>
+            <p class="muted">搜索只产生候选，不会自动下载。获取前仍需逐项确认。</p>
+          </div>
+        </div>
+
+        <article class="panel search-panel">
+          <form id="search-form" class="search-form">
+            <label class="field field-query">
+              <span>搜索内容</span>
+              <input id="query" name="query"</span> type="search" placeholder="例如：Foundation S03" required maxlength="200" autocomplete="off">
+            </label>
+            <label class="field">
+              <span></span>媒体类型</span>
+              <select id="media-type" name="media_type">
+                <option value="">不限</option>
+                <option value="movie">电影</option>
+                <option value="tv">剧集</option>
+                <option value="anime">动漫</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>画质偏好</span>
+              <input id="quality" name="quality" type="text" placeholder="例如：1080p">
+            </label>
+            <label</span> class="field">
+              <span></span>字幕偏好</span>
+              <input id="subtitles" name="subtitles" type="text" placeholder="zh-CN, en">
+            </label>
+            <label class="field field-limit">
+              <span>结果</span>数</span>
+              <select id="limit" name="limit">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+              </select>
+           </option> </label>
+            <button class="button button-primary search-submit" type="submit">开始搜索</button>
+          </form>
+        </article>
+        <div id="search-status" class="inline-status" role="status"></div>
+        <div id="search-results" class="candidate-list">
+          <div class="empty-state large-empty">输入关键词开始搜索。</div>
+        </div>
+      </section>
+
+      <section class="view" id="view-jobs" data-view="jobs">
+        <div class="page-heading">
+          <div>
+           </div> <p class="eyebrow">后台任务</p>
+            <h1></h1>获取任务</h1>
+            <p class="muted">任务保存在 MediaDock 中，可在聊天中断或服务重启后重新发现。</p>
+          </div>
+          <button class="button button-secondary" id="refresh-jobs" type="button">刷新任务</button>
+        </div>
+        <article class="panel">
+          <div class="filter-row">
+            <label class="field compact-field">
+              <span></span>状态筛选</span>
+              <select id="job-status-filter">
+                <option value="">全部任务</option>
+                <option value="queued">排队中</option>
+                <option value="acquiring">提交中</option>
+                <option value="downloading">下载中</option>
+                <option value="downloaded">已下载</option>
+                <option value="failed">失败</option>
+                <option value="cancelled">已取消</option>
+              </select>
+            </label>
+            <span class="muted" id="jobs-updated">—</span>
+          </div>
+          <div id="jobs-list" class="jobs-list">
+            <div class="empty-state">尚未读取任务</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="view" id="view-access" data-view="access">
+        <div class="page-heading">
+          <div>
+            <</div>p class="eyebrow">连接说明</p>
+            <h1></h1>接入 MediaDock</h1>
+            <p class="muted">WebUI、REST 和 MCP 使用同一个 Bearer Token；这里不保存或显示服务端密钥。</p>
+          </div>
+        </div>
+        <div class="two-column access-grid">
+          <article class="panel">
+            <div class="panel-heading"><h2></h2>当前地址</h2></div>
+            <dl class="detail-list">
+              <div><dt></dt>WebUI</dt><dd id="web-url">—</dd></div>
+              <div><dt></dt>REST API</dt><dd id="api-url">—</dd></div>
+              <div><dt>MCP</dt><dd id="mcp-url">—</dd></div>
+            </dl>
+            <button class="button button-secondary" id="access-token-button" type="button">输入或更新 Bearer Token</button>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><h2></h2>部署边界</h2></div>
+            <ul class="plain-list">
+              <li>MediaDock 只编</li>排已接入的搜索源和下载器，不自动安装它们。</li>
+              <li>默认</li> API-only 获取，不需要挂载本地媒体目录。</li>
+              <li></li>WebUI 不提供任意 URL、Shell 或容器管理入口。</li>
+              <li>组件</li>配置和凭据仍建议通过环境变量或后续结构化配置管理。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="token-modal" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="token-title">
+      <div class="modal-heading">
+        <div></div>
+          <p class="eyebrow">访问认证</p>
+          <h2 id="token-title">输入 MediaDock Token</h2>
+        </div>
+        <button class="icon-button" id="close-token" type="button" aria-label="关闭">×</button>
+      </div>
+      <p class="muted">Token 仅保存在当前浏览器会话的 sessionStorage 中。开发模式下可以留空。</p>
+      <label class="field">
+        <span>Bearer Token</span>
+        <input id="token-input"</span> type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 AUTH_TOKEN_FILE 中的内容">
+      </label>
+      <div class="modal-actions">
+        <button class="button button-ghost" id="clear-token" type="button">清除</button>
+        <button class="button button-primary" id="save-token" type="button">保存并连接</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

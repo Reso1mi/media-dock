@@ -17,6 +17,7 @@ import (
 	"github.com/Reso1mi/media-dock/internal/mcpserver"
 	"github.com/Reso1mi/media-dock/internal/search"
 	"github.com/Reso1mi/media-dock/internal/store"
+	"github.com/Reso1mi/media-dock/internal/webui"
 )
 
 func main() {
@@ -52,6 +53,13 @@ func main() {
 				cfg.TransmissionPassword,
 				nil,
 			))
+		case "qbittorrent":
+			downloaders = append(downloaders, acquisition.NewQBittorrentDownloader(
+				cfg.QBittorrentURL,
+				cfg.QBittorrentUser,
+				cfg.QBittorrentPassword,
+				nil,
+			))
 		default:
 			logger.Printf("unknown downloader %q; it will be ignored", name)
 		}
@@ -64,7 +72,10 @@ func main() {
 	// REST business route and the MCP transport. MCP_AUTH_TOKEN is retained as
 	// the legacy environment variable name for the shared service token.
 	rootMux.Handle("/healthz", apiServer.HealthHandler())
-	rootMux.Handle("/", auth.BearerAuth(apiServer.Handler(), authToken))
+	// The static UI contains no service data and is public so it can present a
+	// token prompt. Every REST business route remains protected below.
+	rootMux.Handle("/", webui.Handler())
+	rootMux.Handle("/api/", auth.BearerAuth(apiServer.Handler(), authToken))
 	if cfg.MCPEnabled {
 		mcpHandler := mcpserver.NewHTTPHandler(mcpserver.NewServer(searchService, acquisitionService))
 		rootMux.Handle(cfg.MCPPath, auth.BearerAuth(mcpHandler, authToken))
