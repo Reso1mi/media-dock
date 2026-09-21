@@ -325,6 +325,146 @@
     return values;
   }
 
+  function formatKind(kind) {
+    return {
+      magnet: "磁力链接",
+      torrent: "Torrent 文件",
+      http_file: "HTTP 文件",
+      cloud_share: "网盘分享",
+      unknown: "未知材料",
+    }[kind] || kind || "未提供";
+  }
+
+  function displayValue(value, fallback) {
+    const empty = fallback || "未提供";
+    if (Array.isArray(value)) {
+      return value.length ? value.join(", ") : empty;
+    }
+    if (value === null || value === undefined || value === "") {
+      return empty;
+    }
+    return String(value);
+  }
+
+  function formatPublishedAt(value) {
+    if (!value || String(value).startsWith("0001-01-01")) {
+      return "未提供";
+    }
+    return formatDate(value);
+  }
+
+  function formatCandidateScore(value) {
+    if (value === null || value === undefined || value === "") {
+      return "未提供";
+    }
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(2) : String(value);
+  }
+
+  function acquisitionReason(reason) {
+    return {
+      unsupported_kind: "当前下载器不支持该材料类型",
+      missing_acquirer: "没有匹配的获取组件",
+      candidate_expired: "候选已过期，请重新搜索",
+      downloader_unavailable: "下载器当前不可用",
+    }[reason] || reason || "当前不可获取";
+  }
+
+  function candidateDetail(label, value) {
+    const item = node("div", "candidate-detail");
+    item.append(node("dt", "", label), node("dd", "", value));
+    return item;
+  }
+
+  function renderSearchOverview(result) {
+    const overview = $("#search-overview");
+    clear(overview);
+    overview.classList.remove("hidden");
+
+    const heading = node("div", "search-overview-heading");
+    heading.append(node("strong", "", "本次搜索执行情况"));
+    heading.append(
+      node(
+        "span",
+        "muted",
+        `候选 ${Array.isArray(result && result.candidates) ? result.candidates.length : 0} 条 · 会话 ${displayValue(result && result.search_id)} ` +
+          `· 有效期至 ${formatDate(result && result.expires_at)}`,
+      ),
+    );
+    overview.append(heading);
+
+    const healthGrid = node("div", "provider-health-grid");
+    const health = Array.isArray(result && result.provider_health)
+      ? result.provider_health
+      : [];
+    if (!health.length) {
+      healthGrid.append(node("div", "empty-state", "没有 provider 执行记录"));
+    }
+    health.forEach((item) => {
+      const count = Number(item.count || 0);
+      const stateClass = !item.available
+        ? "unreachable"
+        : count > 0
+          ? "ready"
+          : "unknown";
+      const stateLabel = !item.available
+        ? "请求失败"
+        : count > 0
+          ? `返回 ${count} 条`
+          : "已连接，但返回 0 条";
+      const card = node("article", "provider-health-card");
+      const cardHeading = node("div", "provider-health-heading");
+      cardHeading.append(
+        node("strong", "", item.provider || "未命名 provider"),
+      );
+      cardHeading.append(badge(stateLabel, stateClass));
+      card.append(cardHeading);
+      card.append(
+        node(
+          "p",
+          "provider-health-meta",
+          `耗时 ${displayValue(item.duration_ms, "0")} ms`,
+        ),
+      );
+      if (item.error) {
+        card.append(node("p", "provider-health-error", item.error));
+      } else if (
+        count === 0 &&
+        String(item.provider || "")
+          .toLowerCase()
+          .includes("prowlarr")
+      ) {
+        card.append(
+          node(
+            "p",
+            "provider-health-note",
+            "Prowlarr 已连接，但当前没有返回结果。请在 Prowlarr → Indexers 中添加并测试至少一个索引器。",
+          ),
+        );
+      } else if (count === 0) {
+        card.append(
+          node(
+            "p",
+            "provider-health-note",
+            "组件已响应，但本次关键词没有匹配结果。",
+          ),
+        );
+      }
+      healthGrid.append(card);
+    });
+    overview.append(healthGrid);
+
+    const warnings = Array.isArray(result && result.warnings)
+      ? result.warnings
+      : [];
+    if (warnings.length) {
+      const warningBox = node("div", "search-warnings");
+      warningBox.append(node("strong", "", "搜索提示"));
+      warnings.forEach((warning) => warningBox.append(node("p", "", warning)));
+      overview.append(warningBox);
+    }
+  }
+
   function randomIdempotencyKey() {
     if (window.crypto && typeof window.crypto.randomUUID === "function") {
       return `webui-${window.crypto.randomUUID()}`;
@@ -367,6 +507,7 @@
   }
 
   function renderCandidates(result) {
+    renderSearchOverview(result);
     const list = $("#search-results");
     clear(list);
     const candidates = Array.isArray(result && result.candidates) ? result.candidates : [];
@@ -399,8 +540,52 @@
       candidateMetadata(candidate).forEach((value) => meta.append(node("span", "", value)));
       card.append(meta);
 
-      if (candidate.acquisition && !candidate.acquisition.available) {
-        card.append(node("p", "candidate-note", `暂不可获取：${candidate.acquisition.reason || "缺少匹配的获取组件"}`));
+      const acquisition = candidate.acquisition || {};
+      const detailPanel = document.createElement("details");
+      detailPanel.className = "candidate-details";
+      detailPanel.open = true;
+      detailPanel.append(node("summary", "", "查看完整搜索数据"));
+      const detailGrid = node("dl", "candidate-detail-grid");
+      const size = Number(candidate.size_bytes || 0);
+      const acquisitionValue = acquisition.available
+        ? "可获取（提交前仍需确认）"
+        : "不可获取";
+      detailGrid.append(
+        candidateDetail("候选 ID", displayValue(candidate.id)),
+        candidateDetail("搜索来源", displayValue(candidate.provider)),
+        candidateDetail("来源索引器 / 频道", displayValue(candidate.source_name)),
+        candidateDetail("资源类型", formatKind(candidate.kind)),
+        candidateDetail("文件大小", size > 0 ? formatBytes(size) : "未提供"),
+        candidateDetail("画质", displayValue(candidate.quality)),
+        candidateDetail("编码", displayValue(candidate.codec)),
+        candidateDetail("音频", displayValue(candidate.audio)),
+        candidateDetail("字幕", displayValue(candidate.subtitles)),
+        candidateDetail("做种数", displayValue(candidate.seeders)),
+        candidateDetail("下载数", displayValue(candidate.leechers)),
+        candidateDetail("完整性", displayValue(candidate.completeness)),
+        candidateDetail("发布时间", formatPublishedAt(candidate.published_at)),
+        candidateDetail("标签", displayValue(candidate.tags)),
+        candidateDetail("搜索排名", displayValue(candidate.rank)),
+        candidateDetail("匹配评分", formatCandidateScore(candidate.score)),
+        candidateDetail("获取能力", acquisitionValue),
+        candidateDetail(
+          "获取说明",
+          acquisition.available ? "已匹配当前下载器" : acquisitionReason(acquisition.reason),
+        ),
+        candidateDetail("需要确认", candidate.requires_confirmation ? "是" : "否"),
+      );
+      detailPanel.append(detailGrid);
+      detailPanel.append(
+        node(
+          "p",
+          "candidate-safe-note",
+          "原始下载地址、分享密码和上游私有数据不会展示到 WebUI。",
+        ),
+      );
+      card.append(detailPanel);
+
+      if (!acquisition.available) {
+        card.append(node("p", "candidate-note", `暂不可获取：${acquisitionReason(acquisition.reason)}`));
       }
       list.append(card);
     });

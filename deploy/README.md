@@ -95,6 +95,8 @@ docker compose -f deploy/docker-compose.full.yml \
 
 Prowlarr 的下载客户端配置不是 MediaDock 获取链路的必需项。当前架构是：MediaDock 直接把磁力链接提交给 qBittorrent，Prowlarr 只负责索引器聚合和搜索。
 
+判断 Prowlarr 是否真正参与搜索：在 MediaDock 搜索页查看“本次搜索执行情况”。`Prowlarr：已连接，但返回 0 条` 表示 MediaDock、API Key 和 Prowlarr API 都正常，但 Prowlarr 没有配置可用 indexer，或本次关键词没有匹配；`请求失败` 才表示连接、认证或版本等问题。Prowlarr 不会因为容器启动就自动拥有搜索源，必须在它的 `Indexers` 页面添加并测试至少一个 indexer。
+
 ## 4. 初始化 qBittorrent
 
 打开：
