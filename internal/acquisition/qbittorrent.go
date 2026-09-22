@@ -208,7 +208,7 @@ func (d *QBittorrentDownloader) Start(ctx context.Context, _ string, candidate d
 	if err != nil {
 		return Handle{}, err
 	}
-	if !qBittorrentOK(body) {
+	if !qBittorrentAddAccepted(body, hash) {
 		return Handle{}, fmt.Errorf("qBittorrent rejected torrent: %s", strings.TrimSpace(string(body)))
 	}
 	return Handle{RemoteID: hash, Ownership: HandleOwnershipManaged}, nil
@@ -264,6 +264,28 @@ func (d *QBittorrentDownloader) Cancel(ctx context.Context, remoteID string) err
 func qBittorrentOK(body []byte) bool {
 	value := strings.TrimSpace(string(body))
 	return value == "" || strings.EqualFold(value, "ok.")
+}
+
+func qBittorrentAddAccepted(body []byte, hash string) bool {
+	if qBittorrentOK(body) {
+		return true
+	}
+	// Recent qBittorrent versions return a structured add result instead of
+	// "Ok.". Require this torrent's ID so an unrelated/failed add is not
+	// mistaken for success.
+	var result struct {
+		AddedTorrentIDs []string `json:"added_torrent_ids"`
+		FailureCount    int      `json:"failure_count"`
+	}
+	if json.Unmarshal(body, &result) != nil || result.FailureCount != 0 {
+		return false
+	}
+	for _, addedID := range result.AddedTorrentIDs {
+		if strings.EqualFold(addedID, hash) {
+			return true
+		}
+	}
+	return false
 }
 
 func magnetInfoHash(raw string) string {

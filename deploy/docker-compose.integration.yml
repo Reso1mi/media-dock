@@ -1,0 +1,96 @@
+name: mediadock-integration
+services:
+  fixture:
+    image: node:22-bookworm-slim
+    profiles: [fixtures]
+    command: [node, /server.js]
+    volumes:
+      - ./fixtures/server.js:/server.js:ro
+      - ../data/integration/fixture:/fixture:ro
+  seeder:
+    image: lscr.io/linuxserver/qbittorrent@sha256:457e4eec2ee3f5e4ef59f237ad51f6143deba9f7445ab48bb5204a98888ef9aa
+    profiles: [fixtures]
+    ports:
+      - "127.0.0.1:8082:8080"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "6882"
+    volumes:
+      - ../data/integration/seeder:/config
+      - ../data/integration/fixture:/seed
+      - ./qbittorrent-init:/custom-cont-init.d:ro
+  openlist:
+    image: mediadock/openlist:05408c0d
+    user: "1000:1000"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5244:5244"
+    volumes:
+      - ../data/integration/openlist:/opt/openlist/data
+      - ../data/integration/downloads:/downloads
+  pansou:
+    image: ghcr.io/fish2018/pansou@sha256:1976f4a69a12d37a4d90dd4418ad1f6cd3d6b296e1629f44e57b84378606c4cc
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8888"
+    environment:
+      PORT: "8888"
+      AUTH_ENABLED: "false"
+      CACHE_ENABLED: "true"
+      CACHE_PATH: /app/cache
+      ASYNC_PLUGIN_ENABLED: "true"
+      TZ: Asia/Shanghai
+    volumes:
+      - ../data/integration/pansou-cache:/app/cache
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr@sha256:c96b56d94d116a9f4de94bc23d3381689492e6c3cfb7435320e8d982e406f99a
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9696:9696"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Asia/Shanghai
+    volumes:
+      - ../data/integration/prowlarr:/config
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent@sha256:457e4eec2ee3f5e4ef59f237ad51f6143deba9f7445ab48bb5204a98888ef9aa
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Asia/Shanghai
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "6881"
+    volumes:
+      - ../data/integration/qbittorrent:/config
+      - ../data/integration/downloads:/downloads
+      - ./qbittorrent-init:/custom-cont-init.d:ro
+  media-dock:
+    image: mediadock/core:integration
+    user: "1000:1000"
+    restart: unless-stopped
+    depends_on:
+      - pansou
+      - prowlarr
+      - qbittorrent
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - ../data/integration/secrets/mediadock.env
+    environment:
+      HTTP_ADDR: ":8080"
+      STORAGE_SQLITE_PATH: /config/mediadock.db
+      AUTH_TOKEN_FILE: /config/auth-token
+      PANSOU_BASE_URL: http://pansou:8888
+      PROWLARR_BASE_URL: http://prowlarr:9696
+      QBITTORRENT_URL: http://qbittorrent:8080
+      SEARCH_TIMEOUT: 90s
+    volumes:
+      - ../data/integration/config:/config

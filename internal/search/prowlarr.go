@@ -81,7 +81,49 @@ func (p *ProwlarrProvider) Search(ctx context.Context, request domain.SearchRequ
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode prowlarr response: %w", err)
 	}
-	return parseProwlarrResults(raw, p.Name())
+	items, err := parseProwlarrResults(raw, p.Name())
+	if err != nil {
+		return nil, err
+	}
+	// Prowlarr may wrap magnetUrl in an authenticated /download redirect.
+	// Resolve only same-origin proxy URLs and never follow the redirect: the
+	// Location is the magnet itself, including trackers needed by private BT.
+	for i := range items {
+		proxyURL := stringValue(items[i].RawPayload, "magnetUrl")
+		if magnet := p.resolveMagnetProxy(ctx, proxyURL); magnet != "" {
+			items[i].RawURL = magnet
+			items[i].Kind = domain.CandidateKindMagnet
+		}
+	}
+	return items, nil
+}
+
+func (p *ProwlarrProvider) resolveMagnetProxy(ctx context.Context, rawURL string) string {
+	proxyURL, err := url.Parse(rawURL)
+	if err != nil || !isHTTPURL(rawURL) {
+		return ""
+	}
+	baseURL, err := url.Parse(p.BaseURL)
+	if err != nil || proxyURL.Scheme != baseURL.Scheme || proxyURL.Host != baseURL.Host || proxyURL.User != nil {
+		return ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL.String(), nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("X-Api-Key", p.APIKey)
+	client := *p.Client
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	location := strings.TrimSpace(resp.Header.Get("Location"))
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.HasPrefix(strings.ToLower(location), "magnet:?") {
+		return location
+	}
+	return ""
 }
 
 func parseProwlarrResults(raw json.RawMessage, providerName string) ([]domain.Candidate, error) {

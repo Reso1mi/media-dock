@@ -91,6 +91,37 @@ func TestProwlarrDoesNotTreatGenericHTTPAsTorrent(t *testing.T) {
 	}
 }
 
+func TestProwlarrResolvesItsMagnetProxyWithoutFollowingRedirect(t *testing.T) {
+	const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=http%3A%2F%2Ftracker.test%2Fannounce"
+	var baseURL string
+	proxyCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "secret" {
+			t.Error("missing API key")
+		}
+		switch r.URL.Path {
+		case "/api/v1/search":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"title": "proxied magnet", "protocol": "torrent", "magnetUrl": baseURL + "/1/download?link=opaque"}})
+		case "/1/download":
+			proxyCalls++
+			w.Header().Set("Location", magnet)
+			w.WriteHeader(http.StatusFound)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	provider := NewProwlarrProvider(baseURL, "secret", server.Client())
+	items, err := provider.Search(context.Background(), domain.SearchRequest{Query: "fixture"})
+	if err != nil || len(items) != 1 || items[0].RawURL != magnet || items[0].Kind != domain.CandidateKindMagnet || proxyCalls != 1 {
+		t.Fatalf("unexpected proxy resolution: items=%#v calls=%d err=%v", items, proxyCalls, err)
+	}
+	if got := provider.resolveMagnetProxy(context.Background(), "https://untrusted.example/download"); got != "" {
+		t.Fatalf("resolved an external URL: %q", got)
+	}
+}
+
 type fakeProvider struct {
 	name  string
 	items []domain.Candidate

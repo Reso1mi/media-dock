@@ -35,11 +35,12 @@ func main() {
 	defer persistentStore.Close()
 
 	providers := make([]search.Provider, 0, 2)
+	searchHTTPClient := &http.Client{Timeout: cfg.SearchTimeout}
 	if cfg.PansouBaseURL != "" {
-		providers = append(providers, search.NewPansouProvider(cfg.PansouBaseURL, nil))
+		providers = append(providers, search.NewPansouProvider(cfg.PansouBaseURL, searchHTTPClient))
 	}
 	if cfg.ProwlarrBaseURL != "" {
-		providers = append(providers, search.NewProwlarrProvider(cfg.ProwlarrBaseURL, cfg.ProwlarrAPIKey, nil))
+		providers = append(providers, search.NewProwlarrProvider(cfg.ProwlarrBaseURL, cfg.ProwlarrAPIKey, searchHTTPClient))
 	}
 	searchService := search.NewService(persistentStore, providers, cfg.SearchTimeout, cfg.SearchTTL)
 

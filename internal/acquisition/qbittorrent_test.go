@@ -141,3 +141,41 @@ func TestMagnetInfoHashSupportsBase32(t *testing.T) {
 		t.Fatalf("base32 info hash = %q", got)
 	}
 }
+
+func TestQBittorrentStructuredAddResponse(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	for _, tc := range []struct {
+		body     string
+		accepted bool
+	}{
+		{`{"added_torrent_ids":["0123456789abcdef0123456789abcdef01234567"],"failure_count":0,"pending_count":0,"success_count":1}`, true},
+		{`{"added_torrent_ids":[],"failure_count":1,"success_count":0}`, false},
+		{`{"added_torrent_ids":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"failure_count":0,"success_count":1}`, false},
+		{"Ok.", true},
+		{"Fails.", false},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v2/auth/login":
+					_, _ = w.Write([]byte("Ok."))
+				case "/api/v2/torrents/info":
+					_, _ = w.Write([]byte("[]"))
+				case "/api/v2/torrents/add":
+					_, _ = w.Write([]byte(tc.body))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			downloader := NewQBittorrentDownloader(server.URL, "admin", "secret", server.Client())
+			handle, err := downloader.Start(context.Background(), "job", domain.Candidate{Kind: domain.CandidateKindMagnet, RawURL: testMagnet}, "")
+			if (err == nil) != tc.accepted {
+				t.Fatalf("Start accepted=%v, want %v (error=%v)", err == nil, tc.accepted, err)
+			}
+			if tc.accepted && (handle.RemoteID != hash || handle.Ownership != HandleOwnershipManaged) {
+				t.Fatalf("unexpected handle: %#v", handle)
+			}
+		})
+	}
+}

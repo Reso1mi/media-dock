@@ -1,0 +1,18 @@
+ARG GO_BUILD_IMAGE=golang:1.27.1
+FROM ${GO_BUILD_IMAGE} AS build
+WORKDIR /src
+ENV GODEBUG=http2client=0
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG OPENLIST_COMMIT=unknown
+ARG OPENLIST_WEB_VERSION=unknown
+RUN CGO_ENABLED=0 go build -p 4 -trimpath -tags=jsoniter \
+    -ldflags="-s -w -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=integration -X github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=${OPENLIST_COMMIT} -X github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=${OPENLIST_WEB_VERSION}" \
+    -o /out/openlist .
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /opt/openlist
+COPY --from=build /out/openlist /opt/openlist/openlist
+EXPOSE 5244
+ENTRYPOINT ["/opt/openlist/openlist"]
+CMD ["server", "--data", "/opt/openlist/data"]
