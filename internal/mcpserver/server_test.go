@@ -45,12 +45,14 @@ func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
 		t.Fatalf("list MCP tools: %v", err)
 	}
 	wantTools := map[string]bool{
-		"media_search":       false,
-		"media_acquire":      false,
-		"media_job_status":   false,
-		"media_job_cancel":   false,
-		"media_jobs_list":    false,
-		"media_capabilities": false,
+		"media_search":        false,
+		"media_acquire":       false,
+		"media_copy":          false,
+		"media_job_status":    false,
+		"media_job_reconcile": false,
+		"media_job_cancel":    false,
+		"media_jobs_list":     false,
+		"media_capabilities":  false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := wantTools[tool.Name]; ok {
@@ -77,6 +79,9 @@ func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
 	}
 	if capabilityOutput.Transport != "streamable-http" {
 		t.Fatalf("transport = %q, want streamable-http", capabilityOutput.Transport)
+	}
+	if len(capabilityOutput.TargetProfiles) != 1 || capabilityOutput.TargetProfiles[0].ID != "protocol-test-downloader" {
+		t.Fatalf("unexpected target profiles: %#v", capabilityOutput.TargetProfiles)
 	}
 
 	jobsResult := callTool(t, ctx, session, "media_jobs_list", map[string]any{"limit": 10})
@@ -141,9 +146,27 @@ func TestStreamableHTTPProtocolExposesSafeMediaTools(t *testing.T) {
 	}
 	var job JobOutput
 	decodeToolOutput(t, acquireResult, &job)
-	if job.JobID == "" || job.Status != domain.JobDownloading {
+	if job.JobID == "" || job.Status != domain.JobDownloading || job.Phase != domain.PhaseDownloading || job.Goal != domain.GoalDownloadToLocal || job.TargetProfile != "protocol-test-downloader" {
 		t.Fatalf("unexpected acquisition output: %#v", job)
 	}
+
+	copyResult := callTool(t, ctx, session, "media_copy", map[string]any{
+		"source_path": "/OpenList/source/movie.mkv",
+		"target_dir":  "/OpenList/library",
+		"confirmed":   true,
+	})
+	if copyResult.IsError {
+		t.Fatalf("media_copy returned an MCP tool error: %s", contentText(copyResult))
+	}
+	var copyJob JobOutput
+	decodeToolOutput(t, copyResult, &copyJob)
+	if copyJob.Operation != domain.OperationOpenListCopy || copyJob.Status != domain.JobDownloaded || copyJob.Phase != domain.PhaseDownloaded || downloader.CopyCalls() != 1 {
+		t.Fatalf("unexpected COPY output: %#v, calls=%d", copyJob, downloader.CopyCalls())
+	}
+	if downloader.copyRequest.SourcePath != "/OpenList/source/movie.mkv" || downloader.copyRequest.TargetDir != "/OpenList/library" {
+		t.Fatalf("COPY request = %#v", downloader.copyRequest)
+	}
+
 	jobWire, _ := json.Marshal(acquireResult)
 	if bytes.Contains(jobWire, []byte(incomingDir)) {
 		t.Fatal("MCP acquisition output leaked an internal target path")
@@ -198,6 +221,46 @@ func TestBearerAuthAcceptsBearerSchemeCaseInsensitively(t *testing.T) {
 				t.Fatalf("status = %d, want %d", recorder.Code, test.status)
 			}
 		})
+	}
+}
+
+func TestMediaAcquireReturnsOpenListUncertainJob(t *testing.T) {
+	memoryStore := store.NewMemoryStore()
+	now := time.Now()
+	if err := memoryStore.SaveSearch(domain.SearchSession{
+		ID:        "search-openlist",
+		ExpiresAt: now.Add(time.Hour),
+		Candidates: []domain.Candidate{{
+			ID:       "candidate-openlist",
+			SearchID: "search-openlist",
+			Provider: "fake",
+			Kind:     domain.CandidateKindCloudShare,
+			RawURL:   "https://pan.quark.cn/s/share123",
+		}},
+	}); err != nil {
+		t.Fatalf("save search: %v", err)
+	}
+
+	openListServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":500,"message":"transfer failed after submission"}`))
+	}))
+	defer openListServer.Close()
+	openList, err := acquisition.NewOpenListDownloader(openListServer.URL, "token", "/Quark/MediaDock", openListServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := acquisition.NewService(memoryStore, []acquisition.Downloader{openList}, "")
+	handler := &Handler{acquisition: service}
+
+	_, job, err := handler.acquireMedia(context.Background(), nil, AcquireInput{
+		CandidateID: "candidate-openlist",
+		Confirmed:   true,
+	})
+	if err != nil {
+		t.Fatalf("media_acquire returned an error instead of a job status: %v", err)
+	}
+	if job.Status != domain.JobTransferUncertain || !job.StatusStale || job.JobID == "" {
+		t.Fatalf("unexpected uncertain acquisition job: %#v", job)
 	}
 }
 
@@ -261,9 +324,11 @@ func (protocolProvider) Search(context.Context, domain.SearchRequest) ([]domain.
 }
 
 type protocolDownloader struct {
-	mu      sync.Mutex
-	starts  int
-	cancels int
+	mu          sync.Mutex
+	starts      int
+	cancels     int
+	copyCalls   int
+	copyRequest acquisition.CopyRequest
 }
 
 func (*protocolDownloader) Name() string { return "protocol-test-downloader" }
@@ -279,6 +344,14 @@ func (d *protocolDownloader) Start(context.Context, string, domain.Candidate, st
 
 func (*protocolDownloader) Status(context.Context, string) (acquisition.RemoteStatus, error) {
 	return acquisition.RemoteStatus{Status: "downloading", Progress: 0.25, Message: "protocol test"}, nil
+}
+
+func (d *protocolDownloader) StartCopy(_ context.Context, request acquisition.CopyRequest) (acquisition.Handle, error) {
+	d.mu.Lock()
+	d.copyCalls++
+	d.copyRequest = request
+	d.mu.Unlock()
+	return acquisition.Handle{Completed: true, ResultKind: "protocol-copy"}, nil
 }
 
 func (d *protocolDownloader) Cancel(context.Context, string) error {
@@ -298,4 +371,10 @@ func (d *protocolDownloader) CancelCalls() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.cancels
+}
+
+func (d *protocolDownloader) CopyCalls() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.copyCalls
 }

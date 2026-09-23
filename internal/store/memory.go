@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Reso1mi/media-dock/internal/domain"
@@ -61,6 +62,12 @@ func (s *MemoryStore) GetCandidate(id string) (domain.Candidate, error) {
 func (s *MemoryStore) SaveJob(job domain.AcquisitionJob) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if job.Operation == "" {
+		job.Operation = inferJobOperation(job)
+	}
+	if job.Phase == "" {
+		job.Phase = domain.PhaseForStatus(job.Status)
+	}
 	s.jobs[job.ID] = job
 	return nil
 }
@@ -125,6 +132,16 @@ func (s *MemoryStore) ListJobs(query JobQuery) ([]domain.AcquisitionJob, error) 
 	return append([]domain.AcquisitionJob(nil), jobs[start:end]...), nil
 }
 
+func inferJobOperation(job domain.AcquisitionJob) domain.OperationKind {
+	if job.Downloader == "openlist" && strings.TrimSpace(job.SourcePath) != "" {
+		return domain.OperationOpenListCopy
+	}
+	if job.Goal == domain.GoalSaveToCloud || job.Downloader == "openlist" {
+		return domain.OperationShareTransfer
+	}
+	return domain.OperationDownload
+}
+
 func (s *MemoryStore) UpdateJob(id string, update func(*domain.AcquisitionJob)) (domain.AcquisitionJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -133,6 +150,12 @@ func (s *MemoryStore) UpdateJob(id string, update func(*domain.AcquisitionJob)) 
 		return domain.AcquisitionJob{}, ErrNotFound
 	}
 	update(&job)
+	if job.Operation == "" {
+		job.Operation = inferJobOperation(job)
+	}
+	if job.Phase == "" {
+		job.Phase = domain.PhaseForStatus(job.Status)
+	}
 	s.jobs[id] = job
 	return job, nil
 }

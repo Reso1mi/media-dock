@@ -20,6 +20,9 @@ func TestFromEnvDefaultsToSearchOnly(t *testing.T) {
 	if len(cfg.Downloaders) != 0 {
 		t.Fatalf("expected no downloaders by default, got %#v", cfg.Downloaders)
 	}
+	if cfg.OpenListTargetProfile != "openlist_default" {
+		t.Fatalf("OpenList target profile = %q, want openlist_default", cfg.OpenListTargetProfile)
+	}
 }
 
 func TestFromEnvNormalizesMCPConfiguration(t *testing.T) {

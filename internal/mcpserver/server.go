@@ -21,7 +21,7 @@ import (
 	"github.com/Reso1mi/media-dock/internal/store"
 )
 
-const serverVersion = "0.2.0"
+const serverVersion = "0.3.0"
 
 type Handler struct {
 	search      *search.Service
@@ -39,9 +39,23 @@ type SearchInput struct {
 }
 
 type AcquireInput struct {
-	CandidateID    string `json:"candidate_id" jsonschema:"candidate ID returned by media_search"`
-	Confirmed      bool   `json:"confirmed" jsonschema:"must be true only after the user explicitly selected this candidate"`
-	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional stable key used to safely retry the same acquisition request"`
+	CandidateID    string                 `json:"candidate_id" jsonschema:"candidate ID returned by media_search"`
+	Goal           domain.AcquisitionGoal `json:"goal,omitempty" jsonschema:"save_to_cloud for an OpenList share, or download_to_local for a configured download adapter; defaults by candidate kind"`
+	TargetProfile  string                 `json:"target_profile,omitempty" jsonschema:"server-configured target profile from media_capabilities"`
+	TargetDir      string                 `json:"target_dir,omitempty" jsonschema:"OpenList destination path for save_to_cloud; it is passed to the configured adapter and validated there"`
+	Confirmed      bool                   `json:"confirmed" jsonschema:"must be true only after the user explicitly selected this candidate and destination"`
+	IdempotencyKey string                 `json:"idempotency_key,omitempty" jsonschema:"optional stable key used to safely retry the same acquisition request"`
+}
+
+type CopyInput struct {
+	TargetProfile  string `json:"target_profile,omitempty" jsonschema:"OpenList target profile from media_capabilities"`
+	SourcePath     string `json:"source_path" jsonschema:"absolute OpenList file path to COPY"`
+	TargetDir      string `json:"target_dir" jsonschema:"absolute OpenList destination directory"`
+	Overwrite      bool   `json:"overwrite,omitempty" jsonschema:"replace an existing target file; defaults to false"`
+	SkipExisting   bool   `json:"skip_existing,omitempty" jsonschema:"skip an existing target file; defaults to true"`
+	Merge          bool   `json:"merge,omitempty" jsonschema:"OpenList merge behavior; use only when explicitly supported"`
+	Confirmed      bool   `json:"confirmed" jsonschema:"must be true after the user explicitly confirmed source and destination"`
+	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional stable key used to safely retry the same COPY request"`
 }
 
 type JobInput struct {
@@ -51,12 +65,13 @@ type JobInput struct {
 type JobsListInput struct {
 	Limit    int      `json:"limit,omitempty" jsonschema:"maximum number of jobs, defaults to 20 and is capped at 100"`
 	Offset   int      `json:"offset,omitempty" jsonschema:"number of jobs to skip"`
-	Statuses []string `json:"statuses,omitempty" jsonschema:"optional statuses such as downloading, failed, or downloaded"`
+	Statuses []string `json:"statuses,omitempty" jsonschema:"optional statuses such as downloading, downloaded, transferred, transfer_uncertain, submission_uncertain, or failed"`
 }
 
 type CandidateAcquisitionOutput struct {
-	Available bool   `json:"available"`
-	Reason    string `json:"reason,omitempty"`
+	Available      bool                     `json:"available"`
+	Reason         string                   `json:"reason,omitempty"`
+	SupportedGoals []domain.AcquisitionGoal `json:"supported_goals,omitempty"`
 }
 
 type CandidateOutput struct {
@@ -93,20 +108,27 @@ type SearchOutput struct {
 }
 
 type JobOutput struct {
-	JobID         string              `json:"job_id"`
-	SearchID      string              `json:"search_id,omitempty"`
-	CandidateID   string              `json:"candidate_id"`
-	Downloader    string              `json:"downloader,omitempty"`
-	Status        domain.JobStatus    `json:"status"`
-	Ownership     domain.JobOwnership `json:"ownership,omitempty"`
-	CanCancel     bool                `json:"can_cancel"`
-	StatusStale   bool                `json:"status_stale"`
-	LastCheckedAt *time.Time          `json:"last_checked_at,omitempty"`
-	Progress      float64             `json:"progress"`
-	Message       string              `json:"message,omitempty"`
-	Error         string              `json:"error,omitempty"`
-	CreatedAt     time.Time           `json:"created_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
+	JobID             string                 `json:"job_id"`
+	SearchID          string                 `json:"search_id,omitempty"`
+	CandidateID       string                 `json:"candidate_id,omitempty"`
+	Downloader        string                 `json:"downloader,omitempty"`
+	Operation         domain.OperationKind   `json:"operation"`
+	Goal              domain.AcquisitionGoal `json:"goal"`
+	TargetProfile     string                 `json:"target_profile,omitempty"`
+	ResultKind        string                 `json:"result_kind,omitempty"`
+	Phase             domain.JobPhase        `json:"phase"`
+	Status            domain.JobStatus       `json:"status"`
+	Ownership         domain.JobOwnership    `json:"ownership,omitempty"`
+	CanCancel         bool                   `json:"can_cancel"`
+	StatusStale       bool                   `json:"status_stale"`
+	LastCheckedAt     *time.Time             `json:"last_checked_at,omitempty"`
+	Progress          float64                `json:"progress"`
+	Message           string                 `json:"message,omitempty"`
+	Error             string                 `json:"error,omitempty"`
+	UncertaintyReason string                 `json:"uncertainty_reason,omitempty"`
+	RecoveryAction    string                 `json:"recovery_action,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 }
 
 type JobsListOutput struct {
@@ -125,6 +147,7 @@ type CapabilitiesOutput struct {
 	Downloaders     []string                       `json:"downloaders"`
 	Transport       string                         `json:"transport"`
 	Confirmation    string                         `json:"confirmation"`
+	TargetProfiles  []domain.TargetProfileSummary  `json:"target_profiles"`
 }
 
 func NewServer(searchService *search.Service, acquisitionService *acquisition.Service) *mcp.Server {
@@ -133,7 +156,7 @@ func NewServer(searchService *search.Service, acquisitionService *acquisition.Se
 		Title:   "MediaDock Media Orchestrator",
 		Version: serverVersion,
 	}, &mcp.ServerOptions{
-		Instructions: "Use media_search first. Show candidates to the user and obtain explicit confirmation before calling media_acquire. Raw provider URLs and credentials are intentionally never exposed through MCP.",
+		Instructions: "Use media_search first for media candidates. Show candidates and obtain explicit confirmation before media_acquire. Use media_copy only for a user-confirmed OpenList source file and destination. OpenList paths are passed to the adapter; raw provider URLs and credentials are never exposed through MCP.",
 	})
 
 	handlers := &Handler{search: searchService, acquisition: acquisitionService}
@@ -152,9 +175,16 @@ func NewServer(searchService *search.Service, acquisitionService *acquisition.Se
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "media_acquire",
 		Title:       "Acquire a confirmed media candidate",
-		Description: "Start acquisition for a candidate only after the user explicitly selected and confirmed it. The candidate must come from media_search.",
+		Description: "Start acquisition for a candidate only after the user explicitly selected and confirmed it. The candidate must come from media_search. Use goal=save_to_cloud for a supported OpenList share and pass target_dir when selecting its destination; use goal=download_to_local for a configured download adapter.",
 		Annotations: &mcp.ToolAnnotations{Title: "Acquire confirmed media", ReadOnlyHint: false, DestructiveHint: &additive, OpenWorldHint: &openWorld},
 	}, handlers.acquireMedia)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "media_copy",
+		Title:       "COPY a confirmed OpenList file",
+		Description: "COPY one confirmed OpenList file to a confirmed target directory through the configured OpenList adapter. This is a media business operation, not a raw OpenList API proxy.",
+		Annotations: &mcp.ToolAnnotations{Title: "COPY OpenList file", ReadOnlyHint: false, DestructiveHint: &additive, OpenWorldHint: &openWorld},
+	}, handlers.copyMedia)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "media_job_status",
@@ -164,9 +194,16 @@ func NewServer(searchService *search.Service, acquisitionService *acquisition.Se
 	}, handlers.jobStatus)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "media_job_reconcile",
+		Title:       "Reconcile an uncertain acquisition",
+		Description: "Check the configured external destination for an uncertain acquisition. This never resubmits the transfer and may still require manual verification.",
+		Annotations: &mcp.ToolAnnotations{Title: "Reconcile uncertain acquisition", ReadOnlyHint: readOnly, OpenWorldHint: &openWorld},
+	}, handlers.reconcileJob)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "media_job_cancel",
 		Title:       "Cancel an acquisition job",
-		Description: "Cancel an active acquisition job. This is a user-requested side effect and must not be inferred from a failed status check.",
+		Description: "Cancel an active acquisition job when its adapter supports cancellation. OpenList share transfer is synchronous and cannot be cancelled after submission; an uncertain result must be checked at the configured destination.",
 		Annotations: &mcp.ToolAnnotations{Title: "Cancel acquisition job", ReadOnlyHint: false, DestructiveHint: &destructive, OpenWorldHint: &openWorld},
 	}, handlers.cancelJob)
 
@@ -224,8 +261,39 @@ func (h *Handler) searchMedia(ctx context.Context, _ *mcp.CallToolRequest, input
 }
 
 func (h *Handler) acquireMedia(ctx context.Context, _ *mcp.CallToolRequest, input AcquireInput) (*mcp.CallToolResult, JobOutput, error) {
-	job, err := h.acquisition.StartWithIdempotency(ctx, input.CandidateID, input.Confirmed, input.IdempotencyKey)
+	job, err := h.acquisition.StartRequest(ctx, acquisition.AcquisitionRequest{
+		CandidateID:    input.CandidateID,
+		Goal:           input.Goal,
+		TargetProfile:  input.TargetProfile,
+		TargetDir:      input.TargetDir,
+		Confirmed:      input.Confirmed,
+		IdempotencyKey: input.IdempotencyKey,
+	})
 	if err != nil {
+		if errors.Is(err, acquisition.ErrAcquisitionOutcomeUncertain) && job.ID != "" {
+			return nil, toJobOutput(job), nil
+		}
+		if job.ID != "" {
+			return nil, JobOutput{}, toolError(fmt.Errorf("%w (job_id=%s)", err, job.ID))
+		}
+		return nil, JobOutput{}, toolError(err)
+	}
+	return nil, toJobOutput(job), nil
+}
+
+func (h *Handler) copyMedia(ctx context.Context, _ *mcp.CallToolRequest, input CopyInput) (*mcp.CallToolResult, JobOutput, error) {
+	job, err := h.acquisition.StartCopy(ctx, acquisition.CopyAcquisitionRequest{
+		TargetProfile:  input.TargetProfile,
+		SourcePath:     input.SourcePath,
+		TargetDir:      input.TargetDir,
+		Options:        domain.CopyOptions{Overwrite: input.Overwrite, SkipExisting: input.SkipExisting, Merge: input.Merge},
+		Confirmed:      input.Confirmed,
+		IdempotencyKey: input.IdempotencyKey,
+	})
+	if err != nil {
+		if errors.Is(err, acquisition.ErrAcquisitionOutcomeUncertain) && job.ID != "" {
+			return nil, toJobOutput(job), nil
+		}
 		if job.ID != "" {
 			return nil, JobOutput{}, toolError(fmt.Errorf("%w (job_id=%s)", err, job.ID))
 		}
@@ -241,6 +309,14 @@ func (h *Handler) jobStatus(ctx context.Context, _ *mcp.CallToolRequest, input J
 			return nil, toJobOutput(job), nil
 		}
 		return nil, JobOutput{}, toolError(err)
+	}
+	return nil, toJobOutput(job), nil
+}
+
+func (h *Handler) reconcileJob(ctx context.Context, _ *mcp.CallToolRequest, input JobInput) (*mcp.CallToolResult, JobOutput, error) {
+	job, err := h.acquisition.Reconcile(ctx, input.JobID)
+	if err != nil {
+		return nil, toJobOutput(job), toolError(err)
 	}
 	return nil, toJobOutput(job), nil
 }
@@ -307,10 +383,34 @@ func toolError(err error) error {
 		code = "idempotency_conflict"
 		retryable = false
 		nextAction = "use_a_new_idempotency_key"
+	case errors.Is(err, acquisition.ErrTargetProfileRequired):
+		code = "target_profile_required"
+		retryable = false
+		nextAction = "inspect_capabilities_and_choose_a_target_profile"
+	case errors.Is(err, acquisition.ErrUnknownTargetProfile):
+		code = "unknown_target_profile"
+		retryable = false
+		nextAction = "inspect_capabilities_or_choose_a_supported_profile"
+	case errors.Is(err, acquisition.ErrGoalUnsupported):
+		code = "goal_unsupported"
+		retryable = false
+		nextAction = "inspect_capabilities_or_choose_a_supported_goal"
+	case errors.Is(err, acquisition.ErrAcquisitionOutcomeUncertain):
+		code = "transfer_outcome_uncertain"
+		retryable = false
+		nextAction = "inspect_openlist_destination_before_retry"
+	case errors.Is(err, acquisition.ErrJobNotCancellable):
+		code = "job_not_cancellable"
+		retryable = false
+		nextAction = "inspect_current_job_state"
 	case errors.Is(err, acquisition.ErrRemoteTaskNotManaged):
 		code = "remote_task_not_managed"
 		retryable = false
 		nextAction = "inspect_the_downloader_directly"
+	case errors.Is(err, acquisition.ErrReconcileUnavailable):
+		code = "reconcile_unavailable"
+		retryable = false
+		nextAction = "inspect_the_external_service_directly"
 	case errors.Is(err, store.ErrNotFound):
 		code = "not_found"
 		retryable = false
@@ -339,11 +439,12 @@ func (h *Handler) capabilities(context.Context, *mcp.CallToolRequest, struct{}) 
 		Mode:            mode,
 		Providers:       h.search.Capabilities(),
 		Acquisition:     acquisitionCapabilities,
-		Policy:          domain.CapabilityPolicy{ConfirmationRequired: true, ManageExistingTasks: false, DeleteFiles: false},
+		Policy:          domain.CapabilityPolicy{ConfirmationRequired: true, TrustedApprovalAvailable: false, ManageExistingTasks: false, DeleteFiles: false},
 		SearchProviders: h.search.ProviderNames(),
 		Downloaders:     h.acquisition.DownloaderNames(),
 		Transport:       "streamable-http",
 		Confirmation:    "media_acquire requires confirmed=true after explicit user selection",
+		TargetProfiles:  acquisitionCapabilities.TargetProfiles,
 	}, nil
 }
 
@@ -370,7 +471,7 @@ func toSearchOutput(session domain.SearchSession, acquisitionService *acquisitio
 			PublishedAt:          candidate.PublishedAt,
 			Score:                candidate.Score,
 			RequiresConfirmation: true,
-			Acquisition:          CandidateAcquisitionOutput{Available: available, Reason: reason},
+			Acquisition:          CandidateAcquisitionOutput{Available: available, Reason: reason, SupportedGoals: acquisitionService.CandidateGoals(candidate)},
 		})
 	}
 	return SearchOutput{
@@ -385,21 +486,35 @@ func toSearchOutput(session domain.SearchSession, acquisitionService *acquisitio
 	}
 }
 
+func effectivePhase(job domain.AcquisitionJob) domain.JobPhase {
+	if job.Phase != "" {
+		return job.Phase
+	}
+	return domain.PhaseForStatus(job.Status)
+}
+
 func toJobOutput(job domain.AcquisitionJob) JobOutput {
 	return JobOutput{
-		JobID:         job.ID,
-		SearchID:      job.SearchID,
-		CandidateID:   job.CandidateID,
-		Downloader:    job.Downloader,
-		Status:        job.Status,
-		Ownership:     job.Ownership,
-		CanCancel:     job.Ownership != domain.JobOwnershipExternal && job.Status != domain.JobDownloaded && job.Status != domain.JobCancelled && job.Status != domain.JobFailed,
-		StatusStale:   job.StatusStale,
-		LastCheckedAt: job.LastCheckedAt,
-		Progress:      job.Progress,
-		Message:       job.Message,
-		Error:         job.Error,
-		CreatedAt:     job.CreatedAt,
-		UpdatedAt:     job.UpdatedAt,
+		JobID:             job.ID,
+		SearchID:          job.SearchID,
+		CandidateID:       job.CandidateID,
+		Downloader:        job.Downloader,
+		Operation:         job.Operation,
+		Goal:              job.Goal,
+		TargetProfile:     job.TargetProfile,
+		ResultKind:        job.ResultKind,
+		Phase:             effectivePhase(job),
+		Status:            job.Status,
+		Ownership:         job.Ownership,
+		CanCancel:         acquisition.CanCancel(job),
+		StatusStale:       job.StatusStale,
+		LastCheckedAt:     job.LastCheckedAt,
+		Progress:          job.Progress,
+		Message:           job.Message,
+		Error:             job.Error,
+		UncertaintyReason: job.UncertaintyReason,
+		RecoveryAction:    job.RecoveryAction,
+		CreatedAt:         job.CreatedAt,
+		UpdatedAt:         job.UpdatedAt,
 	}
 }

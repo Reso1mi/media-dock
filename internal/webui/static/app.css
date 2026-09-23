@@ -406,7 +406,8 @@ h2 {
 }
 
 .status-badge.ready,
-.status-badge.downloaded {
+.status-badge.downloaded,
+.status-badge.transferred {
   background: rgba(75, 212, 155, 0.12);
   color: var(--green);
 }
@@ -417,6 +418,11 @@ h2 {
 .status-badge.unauthorized {
   background: rgba(255, 126, 138, 0.12);
   color: var(--red);
+}
+
+.status-badge.transfer_uncertain {
+  background: rgba(246, 184, 107, 0.14);
+  color: var(--orange);
 }
 
 .status-badge.downloading,

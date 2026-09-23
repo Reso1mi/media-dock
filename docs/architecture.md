@@ -1,202 +1,226 @@
-# MediaDock 架构与边界
+# MediaDock 架构与 OpenList fork 集成
 
-## 目标
+## 1. 设计结论
 
-MediaDock 是面向 AI 的轻量媒体组件编排服务。它通过 MCP 暴露统一能力，连接已有搜索源、索引器、下载器和其他媒体服务，不重新实现这些组件。
-
-核心目标是让 AI 能安全地完成：
+MediaDock 是媒体业务编排层，不是 OpenList 的第二个客户端，也不是文件传输引擎。
 
 ```text
-搜索媒体资源 → 让用户选择 → 调用现有下载器 → 监控 → 整理 → 进入 Jellyfin → 通知
-```
-
-第一版只聚焦搜索平台、候选资源模型、确认门和下载器对接。NAStool 和 mediary-scout 是设计参考，不是运行时依赖。
-对 LLM 暴露的主协议是官方 MCP Streamable HTTP；REST API 作为管理、调试和旧客户端兼容层保留。
-
-## 分层
-
-```text
-┌──────────────────────────────────────────────┐
-│ Hermes / Web / Bot / LLM                     │
-│ 解析需求、展示候选、获得确认、查询进度        │
-└──────────────────────┬───────────────────────┘
-                       │ MCP Streamable HTTP / REST
-┌──────────────────────▼───────────────────────┐
-│ Protocol Adapters + Application Services      │
-│ MCP JSON-RPC / REST / 管理接口                │
-│ SearchService / AcquisitionService / 状态门    │
-└───────────────┬─────────────────┬─────────────┘
-                │                 │
-┌───────────────▼────────┐ ┌──────▼────────────┐
-│ Search Providers        │ │ Downloaders       │
-│ PanSou / Prowlarr       │ │ 可配置适配器       │
-│ 后续可接更多索引器       │ │ Transmission/qBit │
-└────────────────────────┘ └───────────────────┘
-                │                 │
-                └────────┬────────┘
+AI / WebUI / REST 客户端
+        │
+        ├── MediaDock MCP：media_search / media_acquire / media_copy / jobs
+        └── MediaDock REST：同一套业务服务的 HTTP 入口
+                         │
                          ▼
-              /volume2/Media/Downloads
+                 AcquisitionService
+              确认 · 选择 · 幂等 · Worker
+              状态 · 恢复 · SQLite 持久化
                          │
-                  后续媒体流水线
-                         │
-        /volume2/Media/TV /Anime /Movie
-                         │
-                      Jellyfin
+              ┌──────────┴──────────┐
+              ▼                     ▼
+       BT 下载器适配器        OpenList HTTP adapter
+       Transmission/qBittorrent  transfer / COPY
+                                      │
+                                      ▼
+                                OpenList fork
+                              权限 · 驱动 · 数据流
 ```
 
-## MCP 协议边界
+关键边界：
 
-服务端使用 `github.com/modelcontextprotocol/go-sdk` 提供标准 MCP Server，端点默认为 `/mcp`，采用 Streamable HTTP 传输。MCP 客户端通过标准生命周期完成：
+- AI 只看到媒体业务工具和稳定的 job ID，不负责跨会话衔接远端任务。
+- REST 和 MCP 都直接进入同一个 `SearchService`、`AcquisitionService`，不发生“MediaDock MCP 再调用 MediaDock REST”的 HTTP 套娃。
+- MediaDock 调 OpenList HTTP API，不调 OpenList MCP。
+- OpenList fork 只需要适配分享转存和文件 COPY 两个窄操作；OpenList 自己继续负责登录、Cookie、网盘驱动、ACL 和实际文件数据流。
+- OpenList 自有 MCP 仍可被 AI 客户端独立连接，用于列目录、查看文件和获取链接；它不是 MediaDock 主流程的旁路任务入口。
 
-```text
-initialize → notifications/initialized → tools/list → tools/call
+## 2. 两条获取链路
+
+### 2.1 搜索候选 → 分享转存
+
+```mermaid
+sequenceDiagram
+  actor User as 用户 / AI
+  participant API as MediaDock REST 或 MCP
+  participant App as AcquisitionService
+  participant DB as SQLite
+  participant OL as OpenList fork
+  participant Drive as 网盘驱动
+
+  User->>API: media_search
+  API->>DB: 保存候选和私有原始材料
+  API-->>User: candidate_id 和安全元数据
+  User->>API: 明确选择、目标目录、confirmed=true
+  API->>App: media_acquire
+  App->>App: 校验候选、goal、profile、幂等键
+  App->>DB: 保存 queued job
+  App->>OL: POST /api/fs/transfer(url, dst_dir, valid_code)
+  OL->>Drive: 执行网盘内转存
+  OL-->>App: 同步完成或 operation_id
+  App->>DB: saved/transferring/uncertain
+  User->>API: media_job_status
+  API-->>User: 同一个 MediaDock job
 ```
 
-工具调用最终进入同一套 `SearchService` 和 `AcquisitionService`，因此 MCP 与 REST 不会形成两套业务规则。当前工具为：
+`candidate_id` 是服务端句柄。原始分享 URL 和提取码保存在 MediaDock 内部，只有在确认后的适配器调用中发送给 OpenList；普通搜索响应和 MCP 输出不暴露它们。
 
-- `media_search`：并行调用已配置的搜索 provider，返回不含原始链接的候选句柄；
-- `media_acquire`：只接受候选 ID，并要求 `confirmed=true`；
-- `media_job_status` / `media_job_cancel`：查询或取消获取任务；
-- `media_jobs_list`：分页重新发现近期、进行中或失败任务；
-- `media_capabilities`：发现当前 provider/downloader 能力。
+### 2.2 已知 OpenList 文件 → COPY
 
-`GET /api/v1/capabilities` 返回同一能力契约的 REST 表达，`GET /api/v1/llm/tools` 仅返回 OpenAI 风格函数定义，用于兼容旧客户端，不替代 MCP。MCP 的工具 schema、结构化输出和错误结果由官方 SDK 负责序列化。
+```mermaid
+sequenceDiagram
+  actor User as 用户 / AI
+  participant API as MediaDock REST 或 MCP
+  participant App as AcquisitionService
+  participant DB as SQLite
+  participant OL as OpenList fork
 
-MCP 输出刻意不包含 `RawURL`、分享密码、provider 原始 payload、下载器远程 ID 或临时目录。候选句柄只在服务端 Store 中解析，LLM 无法构造任意下载地址或目标路径。
+  User->>API: 通过 OpenList MCP/UI 确认 source_path 和 target_dir
+  User->>API: media_copy(source_path, target_dir, confirmed=true)
+  API->>App: StartCopy
+  App->>App: 校验 profile、路径、选项、幂等键
+  App->>DB: 保存 queued job
+  App->>OL: POST /api/fs/copy(src_dir, dst_dir, names, options)
+  OL-->>App: 同步完成或 data.tasks[0].id
+  App->>DB: copying/downloaded/uncertain
+  loop 异步 COPY
+    App->>OL: POST /api/task/copy/info?tid=task_id
+    OL-->>App: TaskInfo state/status/progress/error
+  end
+  opt 用户取消进行中的 COPY
+    App->>OL: POST /api/task/copy/cancel?tid=task_id
+  end
+  User->>API: media_job_status / media_job_cancel
+```
 
-## 搜索模型
+COPY 不依赖搜索候选，不重新调用分享转存，也不把 OpenList link 解析成 MediaDock 本地下载。MediaDock 只追踪由它创建的 COPY job。
 
-搜索 provider 只需要实现：
+## 3. 对外接口
 
-```go
-type Provider interface {
-    Name() string
-    Search(context.Context, domain.SearchRequest) ([]domain.Candidate, error)
+| 业务               | REST                                        | MCP                                   | 外部操作                                |
+| ------------------ | ------------------------------------------- | ------------------------------------- | --------------------------------------- |
+| 搜索               | `POST /api/v1/search`                       | `media_search`                        | 搜索 provider                           |
+| 候选获取           | `POST /api/v1/acquisitions`                 | `media_acquire`                       | 分享转存或配置的下载器                  |
+| OpenList 文件 COPY | `POST /api/v1/copies`                       | `media_copy`                          | `/api/fs/copy`                          |
+| 查询任务           | `GET /api/v1/jobs/{id}`、`GET /api/v1/jobs` | `media_job_status`、`media_jobs_list` | 不改变外部任务                          |
+| 核对不确定任务     | `POST /api/v1/jobs/{id}/reconcile`          | `media_job_reconcile`                 | 只查询 transfer/COPY status             |
+| 取消任务           | `POST /api/v1/jobs/{id}/cancel`             | `media_job_cancel`                    | 只取消 MediaDock 管理且适配器支持的任务 |
+| 能力发现           | `GET /api/v1/capabilities`                  | `media_capabilities`                  | 返回 profile 和 operation               |
+
+### `media_acquire`
+
+```json
+{
+  "candidate_id": "candidate_xxx",
+  "goal": "save_to_cloud",
+  "target_profile": "openlist_default",
+  "target_dir": "/夸克网盘/MediaDock",
+  "confirmed": true,
+  "idempotency_key": "request_xxx"
 }
 ```
 
-provider 返回的资源都归一化为 `domain.Candidate`，然后由 `SearchService` 完成：
+`save_to_cloud` 的 `target_dir` 会作为 OpenList transfer 的 `dst_dir`。没有传入时，旧部署可以使用 `OPENLIST_DEST_DIR` fallback；新调用方应显式传入。`download_to_local` 仍用于 Transmission/qBittorrent 等已配置下载执行端。
 
-- 查询词清理；
-- 并行调用多个 provider；
-- 记录每个 provider 的健康状态；
-- 识别画质、编码、字幕和完整性；
-- 按 URL/资源特征去重；
-- 依据用户偏好排序；
-- 生成本次搜索专属的候选 ID。
+### `media_copy`
 
-### PanSou
-
-使用 PanSou 的 `/api/search` 接口，以 `kw` 和 `res=all` 查询。一个搜索结果可能包含多个链接，因此每个链接都会成为独立候选：
-
-- 115、夸克、123 等分享链接归类为 `cloud_share`；
-- `magnet:` 归类为 `magnet`；
-- 明确的 torrent 地址归类为 `torrent`；
-- 有明确媒体/归档文件扩展名的直链归类为 `http_file`；
-- 无法确认材料类型的普通 HTTP 地址归类为 `unknown`，不会直接宣称可获取。
-
-### Prowlarr
-
-使用 Prowlarr 的 `/api/v1/search` 接口，并将 `magnetUrl`、`downloadUrl` 或 `guid` 转换为下载候选。Prowlarr 适合承接 NAStool 中“索引器聚合”的职责；具体站点管理仍由 Prowlarr 完成。
-
-## 候选句柄与副作用隔离
-
-搜索 API 只返回：
-
-- 候选 ID；
-- 标题、来源和资源类型；
-- 大小、画质、字幕、做种数和评分；
-- 是否需要确认。
-
-不返回：
-
-- 原始分享链接；
-- 分享密码；
-- provider 的完整原始 payload。
-
-真实内容保存在服务端的候选注册表中。用户确认后，获取服务根据候选 ID 找到真实链接，再交给下载器。
-
-这样可以避免 LLM 复述、篡改或臆造下载链接，也使“搜索结果”和“可执行获取计划”绑定在同一份快照上。
-
-## 获取接口
-
-下载器只需要实现：
-
-```go
-type Downloader interface {
-    Name() string
-    Supports(domain.Candidate) bool
-    Start(context.Context, string, domain.Candidate, string) (Handle, error)
-    Status(context.Context, string) (RemoteStatus, error)
-    Cancel(context.Context, string) error
+```json
+{
+  "target_profile": "openlist_default",
+  "source_path": "/夸克网盘/Incoming/movie.mkv",
+  "target_dir": "/夸克网盘/MediaDock",
+  "overwrite": false,
+  "skip_existing": true,
+  "merge": false,
+  "confirmed": true,
+  "idempotency_key": "copy_xxx"
 }
 ```
 
-当前实现 Transmission 和 qBittorrent：
+`source_path` 和 `target_dir` 是 OpenList 虚拟路径，不是 MediaDock 容器路径。`target_profile` 选择服务端配置的 OpenList 实例和凭据。调用方仍必须先让用户确认具体源文件、目标目录和覆盖策略；`confirmed` 不能单独被视为可信 UI 审批凭证。
 
-- Transmission 通过 `torrent-add` 添加 magnet 或明确的 torrent 地址；
-- Transmission 处理 409 session challenge，并校验 RPC `result` 必须为 `success`；
-- qBittorrent 通过 Web API 登录、添加磁力、查询 info hash 状态并取消任务；
-- 两种适配器都会区分 MediaDock 自己创建的任务和下载器原有任务；
-- qBittorrent 第一版只声明支持可解析 info hash 的磁力链接，普通 `.torrent` URL 不会被误报为可获取；
-- 配置本地临时目录时使用 `DOWNLOAD_INCOMING_DIR/<job_id>`；留空时不发送下载目录，进入 API-only 模式。
+## 4. OpenList adapter 和 fork 合同
 
-下载器不是必选组件。通过 `DOWNLOADERS` 使用逗号分隔的名称启用，例如：
+`internal/acquisition/openlist.go` 实现 `Downloader`、`GoalAwareDownloader`、`CopyDownloader` 和 operation-aware 状态接口。它只做以下工作：
 
-```text
-DOWNLOADERS=qbittorrent
-# 或：DOWNLOADERS=transmission,qbittorrent
-```
+1. 校验候选类型、OpenList 路径和 profile；
+2. 把分享候选映射为 `/api/fs/transfer`；
+3. 把一个已知文件拆成 `src_dir`、`names`，映射为 `/api/fs/copy`；
+4. 按 operation 查询 `/api/fs/transfer/status`，或按 OpenList task ID 查询 `/api/task/copy/info`；
+5. 对 COPY 调用 OpenList 原生 `/api/task/copy/cancel`；
+6. 保存安全的目标目录和文件引用。
 
-留空时服务运行在搜索模式；`/api/v1/downloaders` 可查看实际启用的适配器。未知名称只会记录警告并忽略，不会阻止搜索服务启动。
+它不调用 `/api/fs/list` 预检，也不代理 OpenList 的通用 `list/get/link` API。实际接口、响应、状态词和错误/不确定语义见 [`openlist-mediadock-protocol.md`](openlist-mediadock-protocol.md)。
 
-云盘搜索结果目前可以被安全地展示和选择，但尚未内置网盘转存。下一步应增加独立的 `CloudAcquirer`/`Downloader` 适配器，不要把 OpenList 或某个网盘 API 写进搜索服务。
-
-## 任务状态
-
-当前获取任务：
+OpenList fork 的最低新增/适配集合：
 
 ```text
-queued → acquiring → downloading → downloaded
-                         ├→ failed
-                         ├→ cancelled
-                         └→ unsupported
+POST /api/fs/transfer              # Fork 提供的分享转存入口
+POST /api/fs/transfer/status       # 仅当 transfer 异步且没有可复用任务查询时
 ```
 
-完整媒体流程后续扩展为：
+COPY 直接使用 OpenList 现有的：
 
 ```text
-downloaded
-  → verifying
-  → identifying
-  → organizing
-  → jellyfin_refreshing
-  → completed
+POST /api/fs/copy
+POST /api/task/copy/info?tid=<task_id>
+POST /api/task/copy/cancel?tid=<task_id>
 ```
 
-每个状态都应由后台任务持久化，不能依赖聊天记录。MCP 会话只是调用入口，不承载业务状态；任务和候选由 `store.Store` 管理，默认实现为本机 SQLite。候选的 `RawURL`、密码和原始 payload 作为服务端私有执行材料单独保存，不能直接把对外 JSON 当作数据库快照。SQLite 文件应放在本机配置卷中，不放在远程 SMB/NFS 媒体挂载中。
+因此 Fork 不需要新增 `/api/fs/copy/status` 或 `/api/fs/copy/cancel`。同步 COPY 可以返回 `data=null` 或 OpenList 的 `Copy operations completed immediately`；异步 COPY 返回 `data.tasks[0].id`，MediaDock 保存这个原生 task ID。转存请求会带 `Idempotency-Key` 和 `X-MediaDock-Job-ID`，Fork 可以用它们做远端幂等关联和审计。
 
-## 安全和可靠性要求
+## 5. 任务状态、幂等和恢复
 
-- 搜索必须经过显式确认；
-- REST 业务接口和 MCP 端点使用同一 Bearer Token；默认生成并持久化 token，只有显式开发模式才允许无认证；`/healthz` 只暴露最少存活信息；
-- Streamable HTTP 服务不能设置会截断长期 SSE 响应的全局写超时；
-- 下载器只接受白名单候选类型；
-- 临时目录和正式媒体库隔离；
-- 不允许 LLM 直接传入任意目标路径；
-- 后续文件移动必须校验目标路径位于 `/volume2/Media` 内；
-- 搜索会话和候选必须设置 TTL；
-- provider 可以部分失败，不能因为一个索引器异常阻断其他结果；
-- 下载完成后要重新读取真实文件状态，不能仅凭下载器返回值标记入库；
-- 删除和覆盖操作默认关闭，优先进入 quarantine。
+```text
+分享转存：queued → acquiring → downloading / transferring
+                         ├── transferred / saved
+                         └── transfer_uncertain / uncertain
 
-## 为什么先做模块化单体
+OpenList COPY：queued → acquiring → downloading / copying
+                         ├── downloaded
+                         └── submission_uncertain / uncertain
 
-当前部署目标是单用户 NAS，搜索、获取和后续媒体整理之间需要共享候选句柄和任务状态。第一阶段使用一个 Go 服务、SQLite 和后台 Worker 更合适；默认获取只调用下载器 API，不要求 MediaDock 挂载媒体盘：
+普通 BT：queued → acquiring → downloading → downloaded
+```
 
-- 调试链路短；
-- 适合 Docker Compose 部署；
-- provider 和 downloader 已经通过接口隔离；
-- 将来从 SQLite 迁移到其他存储实现时，仍可保持相同业务边界。
+兼容 status 和内部 phase 分开表达：
 
-没有必要在搜索平台尚未稳定之前拆成多个微服务。
+- `status=downloading, phase=transferring` 表示分享转存进行中；
+- `status=downloading, phase=copying` 表示 OpenList COPY 进行中；
+- `status=transferred, phase=saved` 表示网盘内转存完成；
+- `status=downloaded, phase=downloaded` 对 COPY 表示已复制到 OpenList 目标，不表示经过 MediaDock 的本地文件流。
+
+MediaDock 持久化候选快照、job、目标目录、source path、COPY 选项、operation、远端 ID、目标引用、请求摘要、状态和恢复动作。Worker 重启后：
+
+- `queued` 可以安全提交一次；
+- 已进入外部提交而尚未持久化结果的 `acquiring` 不重发，标为不确定；
+- 已取得远端 operation ID 的任务只查询对应 status；
+- status 查询失败不会再次提交 transfer/COPY；
+- 不确定任务需要 `media_job_reconcile` 或人工检查，不能仅换幂等键重试。
+
+幂等键绑定完整业务意图。相同 key 和相同候选/源文件、profile、目标、选项会返回同一个 job；相同 key 的不同意图返回冲突。直接在 OpenList MCP 创建的独立任务不自动导入 MediaDock，也不自动出现在 MediaDock job 列表中。
+
+## 6. 组件职责
+
+| 组件                     | 负责                                                        | 不负责                                       |
+| ------------------------ | ----------------------------------------------------------- | -------------------------------------------- |
+| MediaDock                | 候选句柄、确认门、业务工具、幂等、Worker、状态/恢复、SQLite | 网盘登录、Cookie、通用文件浏览、文件传输引擎 |
+| OpenList fork            | transfer/COPY HTTP、ACL、网盘驱动、远端任务和数据流         | 媒体搜索、候选选择、MediaDock job 生命周期   |
+| Transmission/qBittorrent | BT 任务、下载进度和下载端能力                               | MediaDock 候选与确认                         |
+| AI 客户端                | 理解请求、展示候选/路径、取得确认、提交和查询               | 依赖聊天会话持续在线调度任务                 |
+| OpenList MCP             | 独立网盘浏览/文件查询/链接访问                              | MediaDock 主流程的任务记录                   |
+
+## 7. 配置和部署
+
+OpenList 凭据只保存在 MediaDock 服务端配置，并与 MediaDock 对外 Bearer Token 分开：
+
+| 配置                      | 含义                                              |
+| ------------------------- | ------------------------------------------------- |
+| `DOWNLOADERS`             | 加入 `openlist` 后启用 OpenList adapter           |
+| `OPENLIST_BASE_URL`       | OpenList fork 根地址                              |
+| `OPENLIST_AUTH_TOKEN`     | 发给 OpenList `Authorization` 的原值              |
+| `OPENLIST_TARGET_PROFILE` | 对外 profile ID，不是路径                         |
+| `OPENLIST_DEST_DIR`       | deprecated fallback；请求 `target_dir` 优先       |
+| `DOWNLOAD_INCOMING_DIR`   | BT 本地执行端的可选目录，与 OpenList 虚拟路径无关 |
+
+MediaDock 不需要挂载 OpenList 网盘数据卷。OpenList 自己管理账号、Cookie 和挂载。OpenList 目标目录是否存在、是否可写、源文件是否可读，最终由 OpenList API 判断。
+
+完整字段约束见协议文档；部署联调记录见 [`deploy/INTEGRATION.md`](../deploy/INTEGRATION.md)。

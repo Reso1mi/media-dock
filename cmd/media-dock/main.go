@@ -61,6 +61,19 @@ func main() {
 				cfg.QBittorrentPassword,
 				nil,
 			))
+		case "openlist":
+			openList, err := acquisition.NewOpenListDownloaderWithProfile(
+				cfg.OpenListBaseURL,
+				cfg.OpenListAuthToken,
+				cfg.OpenListDestDir,
+				cfg.OpenListTargetProfile,
+				nil,
+			)
+			if err != nil {
+				logger.Printf("OpenList downloader is not configured; it will be ignored: %v", err)
+				continue
+			}
+			downloaders = append(downloaders, openList)
 		default:
 			logger.Printf("unknown downloader %q; it will be ignored", name)
 		}

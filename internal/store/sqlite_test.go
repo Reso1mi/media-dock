@@ -39,21 +39,46 @@ func TestSQLiteStorePersistsPrivateCandidateMaterialAndJobsAcrossReopen(t *testi
 		t.Fatalf("save search: %v", err)
 	}
 	job := domain.AcquisitionJob{
-		ID:          "job-persisted",
-		SearchID:    candidate.SearchID,
-		CandidateID: candidate.ID,
-		Provider:    candidate.Provider,
-		Downloader:  "downloader-home",
-		Status:      domain.JobDownloading,
-		RemoteID:    "remote-7",
-		TargetDir:   "/remote/downloads/job-persisted",
-		Progress:    0.4,
-		Message:     "downloading",
-		CreatedAt:   createdAt,
-		UpdatedAt:   createdAt,
+		ID:              "job-persisted",
+		SearchID:        candidate.SearchID,
+		CandidateID:     candidate.ID,
+		Provider:        candidate.Provider,
+		Downloader:      "downloader-home",
+		Goal:            domain.GoalSaveToCloud,
+		TargetProfile:   "cloud-library",
+		ResultKind:      "openlist_transfer",
+		Phase:           domain.PhaseSaved,
+		Status:          domain.JobTransferred,
+		RequestDigest:   "digest-persisted",
+		Attempt:         1,
+		TargetReference: &domain.TargetReference{Backend: "openlist", Instance: "openlist:5244", ProfileID: "cloud-library", Kind: "directory", Path: "/夸克/MediaDock", ObservedAt: createdAt},
+		RemoteID:        "remote-7",
+		TargetDir:       "/remote/downloads/job-persisted",
+		Progress:        1,
+		Message:         "downloading",
+		CreatedAt:       createdAt,
+		UpdatedAt:       createdAt,
 	}
 	if err := store.SaveJob(job); err != nil {
 		t.Fatalf("save job: %v", err)
+	}
+	copyJob := domain.AcquisitionJob{
+		ID:            "job-copy-persisted",
+		Provider:      "openlist",
+		Downloader:    "openlist",
+		Operation:     domain.OperationOpenListCopy,
+		Goal:          domain.GoalDownloadToLocal,
+		TargetProfile: "cloud-library",
+		SourcePath:    "/夸克/Incoming/movie.mkv",
+		TargetDir:     "/夸克/MediaDock",
+		CopyOptions:   domain.CopyOptions{Overwrite: true, Merge: true},
+		Phase:         domain.PhaseCopying,
+		Status:        domain.JobDownloading,
+		CreatedAt:     createdAt,
+		UpdatedAt:     createdAt,
+	}
+	if err := store.SaveJob(copyJob); err != nil {
+		t.Fatalf("save copy job: %v", err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close sqlite: %v", err)
@@ -82,7 +107,17 @@ func TestSQLiteStorePersistsPrivateCandidateMaterialAndJobsAcrossReopen(t *testi
 	if err != nil {
 		t.Fatalf("load job: %v", err)
 	}
-	if loadedJob.Status != domain.JobDownloading || loadedJob.RemoteID != job.RemoteID || loadedJob.Progress != job.Progress {
-		t.Fatalf("loaded job = %#v", loadedJob)
+	if loadedJob.Status != domain.JobTransferred || loadedJob.Phase != domain.PhaseSaved || loadedJob.Goal != domain.GoalSaveToCloud || loadedJob.TargetProfile != "cloud-library" || loadedJob.RequestDigest != job.RequestDigest {
+		t.Fatalf("loaded job intent/state = %#v", loadedJob)
+	}
+	if loadedJob.TargetReference == nil || loadedJob.TargetReference.Path != "/夸克/MediaDock" {
+		t.Fatalf("loaded target reference = %#v", loadedJob.TargetReference)
+	}
+	loadedCopy, err := reopened.GetJob(copyJob.ID)
+	if err != nil {
+		t.Fatalf("load copy job: %v", err)
+	}
+	if loadedCopy.Operation != domain.OperationOpenListCopy || loadedCopy.SourcePath != copyJob.SourcePath || loadedCopy.TargetDir != copyJob.TargetDir || loadedCopy.CopyOptions != copyJob.CopyOptions {
+		t.Fatalf("loaded copy intent = %#v", loadedCopy)
 	}
 }

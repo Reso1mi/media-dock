@@ -122,17 +122,74 @@ func TestToolsEndpointReturnsLLMDefinitions(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode tool definitions: %v", err)
 	}
-	if len(payload.Tools) != 6 {
-		t.Fatalf("tool definition count = %d, want 6", len(payload.Tools))
+	if len(payload.Tools) != 8 {
+		t.Fatalf("tool definition count = %d, want 8", len(payload.Tools))
 	}
 	seen := make(map[string]bool, len(payload.Tools))
 	for _, tool := range payload.Tools {
 		seen[tool.Function.Name] = true
 	}
-	for _, name := range []string{"media_search", "media_acquire", "media_job_status", "media_job_cancel", "media_jobs_list", "media_capabilities"} {
+	for _, name := range []string{"media_search", "media_acquire", "media_copy", "media_job_status", "media_job_reconcile", "media_job_cancel", "media_jobs_list", "media_capabilities"} {
 		if !seen[name] {
 			t.Errorf("missing tool definition %q", name)
 		}
+	}
+}
+
+func TestCopyAPIRequiresConfirmationAndCreatesJob(t *testing.T) {
+	memoryStore := store.NewMemoryStore()
+	copyCalls := 0
+	var request struct {
+		SourceDir string   `json:"src_dir"`
+		TargetDir string   `json:"dst_dir"`
+		Names     []string `json:"names"`
+		Skip      bool     `json:"skip_existing"`
+	}
+	openListServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/fs/copy" {
+			http.NotFound(w, r)
+			return
+		}
+		copyCalls++
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode OpenList COPY request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":null}`))
+	}))
+	defer openListServer.Close()
+	openList, err := acquisition.NewOpenListDownloaderForProfile(openListServer.URL, "token", "openlist-http", openListServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchService := search.NewService(memoryStore, nil, time.Second, time.Minute)
+	acquisitionService := acquisition.NewService(memoryStore, []acquisition.Downloader{openList}, "")
+	server := NewServer(searchService, acquisitionService, nil)
+
+	unconfirmed := httptest.NewRequest(http.MethodPost, "/api/v1/copies", bytes.NewBufferString(`{"target_profile":"openlist-http","source_path":"/Quark/source/movie.mkv","target_dir":"/Quark/library","confirmed":false}`))
+	unconfirmedResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unconfirmedResponse, unconfirmed)
+	if unconfirmedResponse.Code != http.StatusPreconditionRequired {
+		t.Fatalf("unconfirmed COPY returned %d: %s", unconfirmedResponse.Code, unconfirmedResponse.Body.String())
+	}
+	if copyCalls != 0 {
+		t.Fatalf("OpenList COPY calls before confirmation = %d, want 0", copyCalls)
+	}
+
+	confirmed := httptest.NewRequest(http.MethodPost, "/api/v1/copies", bytes.NewBufferString(`{"target_profile":"openlist-http","source_path":"/Quark/source/movie.mkv","target_dir":"/Quark/library","confirmed":true,"idempotency_key":"copy-http-1"}`))
+	confirmedResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(confirmedResponse, confirmed)
+	if confirmedResponse.Code != http.StatusAccepted {
+		t.Fatalf("confirmed COPY returned %d: %s", confirmedResponse.Code, confirmedResponse.Body.String())
+	}
+	var job domain.AcquisitionJob
+	if err := json.Unmarshal(confirmedResponse.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode COPY job: %v", err)
+	}
+	if job.Operation != domain.OperationOpenListCopy || job.Status != domain.JobDownloaded || job.Phase != domain.PhaseDownloaded || job.TargetProfile != "openlist-http" {
+		t.Fatalf("unexpected COPY job: %#v", job)
+	}
+	if copyCalls != 1 || request.SourceDir != "/Quark/source" || request.TargetDir != "/Quark/library" || len(request.Names) != 1 || request.Names[0] != "movie.mkv" || !request.Skip {
+		t.Fatalf("COPY calls/request = %d/%#v", copyCalls, request)
 	}
 }
 
@@ -184,6 +241,50 @@ func TestJobsListEndpointSupportsStatusFilter(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte("job-list")) {
 		t.Fatalf("unexpected jobs list response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAcquireAPIReportsOpenListUncertainResultAsJob(t *testing.T) {
+	memoryStore := store.NewMemoryStore()
+	now := time.Now()
+	if err := memoryStore.SaveSearch(domain.SearchSession{
+		ID:        "search-openlist",
+		ExpiresAt: now.Add(time.Hour),
+		Candidates: []domain.Candidate{{
+			ID:       "candidate-openlist",
+			SearchID: "search-openlist",
+			Provider: "fake",
+			Kind:     domain.CandidateKindCloudShare,
+			RawURL:   "https://pan.quark.cn/s/share123",
+		}},
+	}); err != nil {
+		t.Fatalf("save search: %v", err)
+	}
+
+	openListServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":500,"message":"transfer failed after submission"}`))
+	}))
+	defer openListServer.Close()
+	openList, err := acquisition.NewOpenListDownloader(openListServer.URL, "token", "/Quark/MediaDock", openListServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchService := search.NewService(memoryStore, nil, time.Second, time.Minute)
+	acquisitionService := acquisition.NewService(memoryStore, []acquisition.Downloader{openList}, "")
+	server := NewServer(searchService, acquisitionService, nil)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/acquisitions", bytes.NewBufferString(`{"candidate_id":"candidate-openlist","confirmed":true}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("acquisition returned %d: %s", response.Code, response.Body.String())
+	}
+	var job domain.AcquisitionJob
+	if err := json.Unmarshal(response.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode acquisition job: %v", err)
+	}
+	if job.Status != domain.JobTransferUncertain || job.Phase != domain.PhaseUncertain || job.Goal != domain.GoalSaveToCloud || job.TargetProfile != "openlist_default" || !job.StatusStale || job.ID == "" {
+		t.Fatalf("unexpected uncertain acquisition job: %#v", job)
 	}
 }
 

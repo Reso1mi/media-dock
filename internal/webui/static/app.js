@@ -118,7 +118,9 @@
         setConnection("需要认证", "error");
         openTokenModal();
       }
-      const error = new Error(errorMessage(payload, `请求失败（${response.status}）`));
+      const error = new Error(
+        errorMessage(payload, `请求失败（${response.status}）`),
+      );
       error.status = response.status;
       error.payload = payload;
       throw error;
@@ -127,33 +129,52 @@
   }
 
   function formatMode(mode) {
-    return {
-      search_only: "仅搜索",
-      search_and_acquire: "搜索 + 获取",
-    }[mode] || mode || "未知";
+    return (
+      {
+        search_only: "仅搜索",
+        search_and_acquire: "搜索 + 获取",
+      }[mode] ||
+      mode ||
+      "未知"
+    );
   }
 
   function formatState(stateValue) {
-    return {
-      ready: "就绪",
-      unknown: "未检测",
-      unconfigured: "未配置",
-      unreachable: "不可达",
-      unauthorized: "未授权",
-      incompatible: "不兼容",
-    }[stateValue] || stateValue || "未知";
+    return (
+      {
+        ready: "就绪",
+        unknown: "未检测",
+        unconfigured: "未配置",
+        unreachable: "不可达",
+        unauthorized: "未授权",
+        incompatible: "不兼容",
+      }[stateValue] ||
+      stateValue ||
+      "未知"
+    );
   }
 
   function formatJobStatus(status) {
-    return {
-      queued: "排队中",
-      acquiring: "提交中",
-      downloading: "下载中",
-      downloaded: "已下载",
-      failed: "失败",
-      cancelled: "已取消",
-      unsupported: "不支持",
-    }[status] || status || "未知";
+    return (
+      {
+        queued: "排队中",
+        acquiring: "提交中",
+        submitting: "提交中",
+        transferring: "转存中",
+        saved: "已保存",
+        resolving: "解析中",
+        downloading: "下载中",
+        downloaded: "已下载",
+        uncertain: "结果待核对",
+        transferred: "已转存到网盘",
+        transfer_uncertain: "转存结果待核对",
+        failed: "失败",
+        cancelled: "已取消",
+        unsupported: "不支持",
+      }[status] ||
+      status ||
+      "未知"
+    );
   }
 
   function formatBytes(bytes) {
@@ -178,7 +199,10 @@
     if (Number.isNaN(date.getTime())) {
       return String(value);
     }
-    return date.toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" });
+    return date.toLocaleString("zh-CN", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
   }
 
   function renderProviders(providers) {
@@ -191,9 +215,21 @@
     providers.forEach((provider) => {
       const row = node("div", "component-row");
       const details = node("div");
-      details.append(node("span", "component-name", provider.id || provider.type || "未命名组件"));
+      details.append(
+        node(
+          "span",
+          "component-name",
+          provider.id || provider.type || "未命名组件",
+        ),
+      );
       const reason = provider.reason ? ` · ${provider.reason}` : "";
-      details.append(node("span", "component-type", `${provider.type || "unknown"}${reason}`));
+      details.append(
+        node(
+          "span",
+          "component-type",
+          `${provider.type || "unknown"}${reason}`,
+        ),
+      );
       row.append(details, badge(formatState(provider.state), provider.state));
       list.append(row);
     });
@@ -205,7 +241,9 @@
     const supported = Array.isArray(acquisition && acquisition.supported_kinds)
       ? acquisition.supported_kinds
       : [];
-    const unavailable = Array.isArray(acquisition && acquisition.unavailable_kinds)
+    const unavailable = Array.isArray(
+      acquisition && acquisition.unavailable_kinds,
+    )
       ? acquisition.unavailable_kinds
       : [];
 
@@ -224,7 +262,9 @@
     downloaderLine.append(node("span", "", "已启用下载器"));
     const downloaderValues = node("div", "capability-values");
     if (downloaders.length) {
-      downloaders.forEach((downloader) => downloaderValues.append(kindBadge(downloader)));
+      downloaders.forEach((downloader) =>
+        downloaderValues.append(kindBadge(downloader)),
+      );
     } else {
       downloaderValues.append(node("span", "muted", "未配置"));
     }
@@ -233,14 +273,22 @@
 
     const defaultLine = node("div", "capability-line");
     defaultLine.append(node("span", "", "默认下载器"));
-    defaultLine.append(node("strong", "", acquisition && acquisition.default_downloader_id || "未设置"));
+    defaultLine.append(
+      node(
+        "strong",
+        "",
+        (acquisition && acquisition.default_downloader_id) || "未设置",
+      ),
+    );
     summary.append(defaultLine);
 
     if (unavailable.length) {
       const unavailableLine = node("div", "capability-line");
       unavailableLine.append(node("span", "", "暂不可获取"));
       const unavailableValues = node("div", "capability-values");
-      unavailable.forEach((item) => unavailableValues.append(kindBadge(`${item.kind}: ${item.reason}`)));
+      unavailable.forEach((item) =>
+        unavailableValues.append(kindBadge(`${item.kind}: ${item.reason}`)),
+      );
       unavailableLine.append(unavailableValues);
       summary.append(unavailableLine);
     }
@@ -264,10 +312,20 @@
 
   function renderDashboard(capabilities, downloaders) {
     setText("#capability-mode", formatMode(capabilities.mode));
-    setText("#provider-count", Array.isArray(capabilities.providers) ? capabilities.providers.length : 0);
+    setText(
+      "#provider-count",
+      Array.isArray(capabilities.providers) ? capabilities.providers.length : 0,
+    );
     setText("#downloader-count", downloaders.length);
-    setText("#confirmation-policy", capabilities.policy && capabilities.policy.confirmation_required ? "需要" : "关闭");
-    renderProviders(Array.isArray(capabilities.providers) ? capabilities.providers : []);
+    setText(
+      "#confirmation-policy",
+      capabilities.policy && capabilities.policy.confirmation_required
+        ? "需要"
+        : "关闭",
+    );
+    renderProviders(
+      Array.isArray(capabilities.providers) ? capabilities.providers : [],
+    );
     renderAcquisition(capabilities.acquisition || {}, downloaders);
     renderPolicy(capabilities.policy || {});
   }
@@ -290,13 +348,19 @@
         ? results[1].downloaders
         : [];
       renderDashboard(capabilities, downloaders);
-      setText("#health-detail", health && health.status === "ok" ? "服务运行正常" : "服务状态未知");
+      setText(
+        "#health-detail",
+        health && health.status === "ok" ? "服务运行正常" : "服务状态未知",
+      );
       setConnection("已连接", "ready");
     } catch (error) {
       if (requestID !== state.dashboardRequest) {
         return;
       }
-      setText("#health-detail", error.status === 401 ? "请输入 Bearer Token" : error.message);
+      setText(
+        "#health-detail",
+        error.status === 401 ? "请输入 Bearer Token" : error.message,
+      );
       if (error.status !== 401) {
         setConnection("连接失败", "error");
         showToast(error.message, true);
@@ -326,13 +390,17 @@
   }
 
   function formatKind(kind) {
-    return {
-      magnet: "磁力链接",
-      torrent: "Torrent 文件",
-      http_file: "HTTP 文件",
-      cloud_share: "网盘分享",
-      unknown: "未知材料",
-    }[kind] || kind || "未提供";
+    return (
+      {
+        magnet: "磁力链接",
+        torrent: "Torrent 文件",
+        http_file: "HTTP 文件",
+        cloud_share: "网盘分享",
+        unknown: "未知材料",
+      }[kind] ||
+      kind ||
+      "未提供"
+    );
   }
 
   function displayValue(value, fallback) {
@@ -362,12 +430,17 @@
   }
 
   function acquisitionReason(reason) {
-    return {
-      unsupported_kind: "当前下载器不支持该材料类型",
-      missing_acquirer: "没有匹配的获取组件",
-      candidate_expired: "候选已过期，请重新搜索",
-      downloader_unavailable: "下载器当前不可用",
-    }[reason] || reason || "当前不可获取";
+    return (
+      {
+        unsupported_kind: "当前下载器不支持该材料类型",
+        unsupported_goal: "当前适配器不支持该获取目标",
+        missing_acquirer: "没有匹配的获取组件",
+        candidate_expired: "候选已过期，请重新搜索",
+        downloader_unavailable: "下载器当前不可用",
+      }[reason] ||
+      reason ||
+      "当前不可获取"
+    );
   }
 
   function candidateDetail(label, value) {
@@ -404,11 +477,15 @@
     panel.append(heading);
 
     if (sourceError) {
-      panel.append(node("p", "candidate-source-empty", `原始来源加载失败：${sourceError}`));
+      panel.append(
+        node("p", "candidate-source-empty", `原始来源加载失败：${sourceError}`),
+      );
       return panel;
     }
     if (!source || !source.raw_url) {
-      panel.append(node("p", "candidate-source-empty", "搜索源没有提供可展示的原始链接。"));
+      panel.append(
+        node("p", "candidate-source-empty", "搜索源没有提供可展示的原始链接。"),
+      );
       return panel;
     }
 
@@ -438,10 +515,18 @@
       const passwordRow = node("div", "candidate-source-row");
       passwordRow.append(node("span", "candidate-source-label", "分享密码"));
       const passwordValue = node("div", "candidate-source-value");
-      passwordValue.append(node("code", "candidate-source-password", source.password));
-      const copyPassword = node("button", "button button-ghost button-small", "复制");
+      passwordValue.append(
+        node("code", "candidate-source-password", source.password),
+      );
+      const copyPassword = node(
+        "button",
+        "button button-ghost button-small",
+        "复制",
+      );
       copyPassword.type = "button";
-      copyPassword.addEventListener("click", () => copySourceValue(source.password));
+      copyPassword.addEventListener("click", () =>
+        copySourceValue(source.password),
+      );
       passwordValue.append(copyPassword);
       passwordRow.append(passwordValue);
       panel.append(passwordRow);
@@ -565,11 +650,13 @@
 
   async function acquireCandidate(candidate, button) {
     const available = candidate.acquisition && candidate.acquisition.available;
+    const goal =
+      candidate.kind === "cloud_share" ? "save_to_cloud" : "download_to_local";
     if (!available) {
       return;
     }
     const confirmed = window.confirm(
-      `确认将“${candidate.title || "此候选"}”提交给下载器吗？\n\nMediaDock 只会提交任务，不会删除文件。`,
+      `确认将“${candidate.title || "此候选"}”提交给 MediaDock 吗？\n\n目标：${goal === "save_to_cloud" ? "保存到配置的云盘目录" : "交给配置的下载器下载到目标目录"}\nMediaDock 不会删除文件。`,
     );
     if (!confirmed) {
       return;
@@ -581,6 +668,7 @@
         method: "POST",
         body: {
           candidate_id: candidate.id,
+          goal,
           confirmed: true,
           idempotency_key: randomIdempotencyKey(),
         },
@@ -599,10 +687,17 @@
 
   function renderCandidates(result, sourceDetails, sourceError) {
     renderSearchOverview(result, sourceError);
-    const sourceMap = new Map((Array.isArray(sourceDetails) ? sourceDetails : []).map((source) => [source.candidate_id, source]));
+    const sourceMap = new Map(
+      (Array.isArray(sourceDetails) ? sourceDetails : []).map((source) => [
+        source.candidate_id,
+        source,
+      ]),
+    );
     const list = $("#search-results");
     clear(list);
-    const candidates = Array.isArray(result && result.candidates) ? result.candidates : [];
+    const candidates = Array.isArray(result && result.candidates)
+      ? result.candidates
+      : [];
     if (!candidates.length) {
       list.append(node("div", "empty-state large-empty", "没有找到候选资源。"));
       return;
@@ -612,15 +707,29 @@
       const card = node("article", "candidate-card");
       const main = node("div", "candidate-main");
       const details = node("div");
-      details.append(node("h3", "candidate-title", candidate.title || "未命名候选"));
-      details.append(node("p", "candidate-subtitle", `${candidate.source_name || candidate.provider || "未知来源"} · 排名 ${candidate.rank || "—"}`));
+      details.append(
+        node("h3", "candidate-title", candidate.title || "未命名候选"),
+      );
+      details.append(
+        node(
+          "p",
+          "candidate-subtitle",
+          `${candidate.source_name || candidate.provider || "未知来源"} · 排名 ${candidate.rank || "—"}`,
+        ),
+      );
       main.append(details);
 
       const actions = node("div", "candidate-actions");
       if (candidate.acquisition && candidate.acquisition.available) {
-        const button = node("button", "button button-primary button-small", "确认获取");
+        const button = node(
+          "button",
+          "button button-primary button-small",
+          "确认获取",
+        );
         button.type = "button";
-        button.addEventListener("click", () => acquireCandidate(candidate, button));
+        button.addEventListener("click", () =>
+          acquireCandidate(candidate, button),
+        );
         actions.append(button);
       } else {
         actions.append(node("span", "status-badge unreachable", "暂不可获取"));
@@ -629,7 +738,9 @@
       card.append(main);
 
       const meta = node("div", "candidate-meta");
-      candidateMetadata(candidate).forEach((value) => meta.append(node("span", "", value)));
+      candidateMetadata(candidate).forEach((value) =>
+        meta.append(node("span", "", value)),
+      );
       card.append(meta);
 
       const acquisition = candidate.acquisition || {};
@@ -645,7 +756,10 @@
       detailGrid.append(
         candidateDetail("候选 ID", displayValue(candidate.id)),
         candidateDetail("搜索来源", displayValue(candidate.provider)),
-        candidateDetail("来源索引器 / 频道", displayValue(candidate.source_name)),
+        candidateDetail(
+          "来源索引器 / 频道",
+          displayValue(candidate.source_name),
+        ),
         candidateDetail("资源类型", formatKind(candidate.kind)),
         candidateDetail("文件大小", size > 0 ? formatBytes(size) : "未提供"),
         candidateDetail("画质", displayValue(candidate.quality)),
@@ -661,10 +775,19 @@
         candidateDetail("匹配评分", formatCandidateScore(candidate.score)),
         candidateDetail("获取能力", acquisitionValue),
         candidateDetail(
-          "获取说明",
-          acquisition.available ? "已匹配当前下载器" : acquisitionReason(acquisition.reason),
+          "支持目标",
+          displayValue(acquisition.supported_goals, "未提供"),
         ),
-        candidateDetail("需要确认", candidate.requires_confirmation ? "是" : "否"),
+        candidateDetail(
+          "获取说明",
+          acquisition.available
+            ? "已匹配当前下载器"
+            : acquisitionReason(acquisition.reason),
+        ),
+        candidateDetail(
+          "需要确认",
+          candidate.requires_confirmation ? "是" : "否",
+        ),
       );
       detailPanel.append(detailGrid);
       detailPanel.append(
@@ -675,10 +798,22 @@
         ),
       );
       card.append(detailPanel);
-      card.append(renderOriginalSource(candidate, sourceMap.get(candidate.id), sourceError));
+      card.append(
+        renderOriginalSource(
+          candidate,
+          sourceMap.get(candidate.id),
+          sourceError,
+        ),
+      );
 
       if (!acquisition.available) {
-        card.append(node("p", "candidate-note", `暂不可获取：${acquisitionReason(acquisition.reason)}`));
+        card.append(
+          node(
+            "p",
+            "candidate-note",
+            `暂不可获取：${acquisitionReason(acquisition.reason)}`,
+          ),
+        );
       }
       list.append(card);
     });
@@ -687,8 +822,8 @@
   async function submitSearch(event) {
     event.preventDefault();
     const form = event.currentTarget;
-    const subtitles = $("#subtitles").value
-      .split(",")
+    const subtitles = $("#subtitles")
+      .value.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
     const body = {
@@ -722,8 +857,12 @@
         sourceError = error.message;
       }
       renderCandidates(result, sourceDetails, sourceError);
-      const count = Array.isArray(result && result.candidates) ? result.candidates.length : 0;
-      setSearchStatus(`找到 ${count} 个候选，搜索会话有效期至 ${formatDate(result && result.expires_at)}。`);
+      const count = Array.isArray(result && result.candidates)
+        ? result.candidates.length
+        : 0;
+      setSearchStatus(
+        `找到 ${count} 个候选，搜索会话有效期至 ${formatDate(result && result.expires_at)}。`,
+      );
     } catch (error) {
       setSearchStatus(error.message, true);
       showToast(error.message, true);
@@ -746,19 +885,35 @@
       const row = node("div", "job-row");
       const identity = node("div");
       identity.append(node("span", "job-id", job.id || "未知任务"));
-      identity.append(node("span", "job-message", `${job.provider || "未知来源"} · 候选 ${job.candidate_id || "—"}`));
+      identity.append(
+        node(
+          "span",
+          "job-message",
+          `${job.provider || "未知来源"} · ${job.goal || "默认目标"} · 候选 ${job.candidate_id || "—"}`,
+        ),
+      );
       row.append(identity);
 
       const status = node("div");
       status.append(badge(formatJobStatus(job.status), job.status));
+      if (job.phase && job.phase !== job.status) {
+        status.append(
+          node("span", "job-date", `阶段：${formatJobStatus(job.phase)}`),
+        );
+      }
       if (job.status_stale) {
         status.append(node("span", "job-date", "状态待刷新"));
       }
       row.append(status);
 
       const progress = node("div");
-      const progressValue = Math.max(0, Math.min(100, Number(job.progress || 0) * 100));
-      progress.append(node("span", "job-message", job.message || job.error || "暂无状态说明"));
+      const progressValue = Math.max(
+        0,
+        Math.min(100, Number(job.progress || 0) * 100),
+      );
+      progress.append(
+        node("span", "job-message", job.message || job.error || "暂无状态说明"),
+      );
       if (["queued", "acquiring", "downloading"].includes(job.status)) {
         const bar = node("div", "job-progress");
         const fill = node("span");
@@ -766,14 +921,30 @@
         bar.append(fill);
         progress.append(bar);
       }
-      progress.append(node("span", "job-date", `更新时间：${formatDate(job.updated_at)}`));
+      progress.append(
+        node("span", "job-date", `更新时间：${formatDate(job.updated_at)}`),
+      );
       row.append(progress);
 
       const actions = node("div");
-      const canCancel = job.ownership === "managed"
-        && !["downloaded", "failed", "cancelled", "unsupported"].includes(job.status);
+      const canCancel =
+        job.ownership !== "external" &&
+        ![
+          "downloaded",
+          "transferred",
+          "transfer_uncertain",
+          "submission_uncertain",
+          "failed",
+          "cancelled",
+          "unsupported",
+        ].includes(job.status) &&
+        job.status !== "acquiring";
       if (canCancel) {
-        const button = node("button", "button button-ghost button-small", "取消");
+        const button = node(
+          "button",
+          "button button-ghost button-small",
+          "取消",
+        );
         button.type = "button";
         button.addEventListener("click", () => cancelJob(job, button));
         actions.append(button);
@@ -788,14 +959,19 @@
   async function refreshJobs(quiet) {
     const requestID = ++state.jobsRequest;
     const status = $("#job-status-filter").value;
-    const query = status ? `?limit=50&status=${encodeURIComponent(status)}` : "?limit=50";
+    const query = status
+      ? `?limit=50&status=${encodeURIComponent(status)}`
+      : "?limit=50";
     try {
       const payload = await api(`/api/v1/jobs${query}`);
       if (requestID !== state.jobsRequest) {
         return;
       }
       renderJobs(payload);
-      setText("#jobs-updated", `更新于 ${new Date().toLocaleTimeString("zh-CN")}`);
+      setText(
+        "#jobs-updated",
+        `更新于 ${new Date().toLocaleTimeString("zh-CN")}`,
+      );
     } catch (error) {
       if (!quiet && error.status !== 401) {
         showToast(error.message, true);
@@ -809,13 +985,19 @@
   }
 
   async function cancelJob(job, button) {
-    if (!window.confirm(`确认取消任务 ${job.id} 吗？\n\n已存在于下载器中的外部任务不会被 MediaDock 取消。`)) {
+    if (
+      !window.confirm(
+        `确认取消任务 ${job.id} 吗？\n\n已存在于下载器中的外部任务不会被 MediaDock 取消。`,
+      )
+    ) {
       return;
     }
     button.disabled = true;
     button.textContent = "取消中…";
     try {
-      await api(`/api/v1/jobs/${encodeURIComponent(job.id)}/cancel`, { method: "POST" });
+      await api(`/api/v1/jobs/${encodeURIComponent(job.id)}/cancel`, {
+        method: "POST",
+      });
       showToast("任务取消请求已完成");
       await refreshJobs();
     } catch (error) {
@@ -835,7 +1017,10 @@
       section.setAttribute("aria-hidden", active ? "false" : "true");
     });
     $$(`[data-view-link]`).forEach((link) => {
-      link.classList.toggle("active", link.dataset.viewLink === state.currentView);
+      link.classList.toggle(
+        "active",
+        link.dataset.viewLink === state.currentView,
+      );
     });
     if (window.location.hash !== `#${state.currentView}`) {
       window.history.replaceState(null, "", `#${state.currentView}`);
@@ -894,12 +1079,17 @@
       closeTokenModal();
     }
   });
-  window.addEventListener("hashchange", () => setView(window.location.hash.slice(1)));
+  window.addEventListener("hashchange", () =>
+    setView(window.location.hash.slice(1)),
+  );
 
   setupAccessView();
   setView(window.location.hash.slice(1) || "dashboard");
   window.setInterval(() => {
-    if (state.currentView === "jobs" && document.visibilityState === "visible") {
+    if (
+      state.currentView === "jobs" &&
+      document.visibilityState === "visible"
+    ) {
       refreshJobs(true);
     }
   }, 10000);

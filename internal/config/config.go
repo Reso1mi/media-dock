@@ -29,6 +29,11 @@ type Config struct {
 	QBittorrentUser     string
 	QBittorrentPassword string
 
+	OpenListBaseURL       string
+	OpenListAuthToken     string
+	OpenListDestDir       string
+	OpenListTargetProfile string
+
 	IncomingDir   string
 	SearchTimeout time.Duration
 	SearchTTL     time.Duration
@@ -40,23 +45,27 @@ func FromEnv() Config {
 		sqlitePath = env("SQLITE_PATH", "./data/mediadock.db")
 	}
 	return Config{
-		HTTPAddr:             env("HTTP_ADDR", ":8080"),
-		SQLitePath:           sqlitePath,
-		MCPEnabled:           boolEnv("MCP_ENABLED", true),
-		MCPPath:              normalizedPath(env("MCP_PATH", "/mcp")),
-		MCPAuthToken:         firstEnv("AUTH_TOKEN", "MCP_AUTH_TOKEN"),
-		AuthTokenFile:        env("AUTH_TOKEN_FILE", "./data/auth-token"),
-		AuthDisabled:         boolEnv("AUTH_DISABLED", false),
-		PansouBaseURL:        env("PANSOU_BASE_URL", ""),
-		ProwlarrBaseURL:      env("PROWLARR_BASE_URL", ""),
-		ProwlarrAPIKey:       env("PROWLARR_API_KEY", ""),
-		Downloaders:          listEnv("DOWNLOADERS"),
-		TransmissionRPCURL:   env("TRANSMISSION_RPC_URL", "http://127.0.0.1:9091/transmission/rpc"),
-		TransmissionUser:     env("TRANSMISSION_USER", ""),
-		TransmissionPassword: env("TRANSMISSION_PASSWORD", ""),
-		QBittorrentURL:       env("QBITTORRENT_URL", "http://127.0.0.1:8080"),
-		QBittorrentUser:      env("QBITTORRENT_USER", "admin"),
-		QBittorrentPassword:  env("QBITTORRENT_PASSWORD", ""),
+		HTTPAddr:              env("HTTP_ADDR", ":8080"),
+		SQLitePath:            sqlitePath,
+		MCPEnabled:            boolEnv("MCP_ENABLED", true),
+		MCPPath:               normalizedPath(env("MCP_PATH", "/mcp")),
+		MCPAuthToken:          firstEnv("AUTH_TOKEN", "MCP_AUTH_TOKEN"),
+		AuthTokenFile:         env("AUTH_TOKEN_FILE", "./data/auth-token"),
+		AuthDisabled:          boolEnv("AUTH_DISABLED", false),
+		PansouBaseURL:         env("PANSOU_BASE_URL", ""),
+		ProwlarrBaseURL:       env("PROWLARR_BASE_URL", ""),
+		ProwlarrAPIKey:        env("PROWLARR_API_KEY", ""),
+		Downloaders:           listEnv("DOWNLOADERS"),
+		TransmissionRPCURL:    env("TRANSMISSION_RPC_URL", "http://127.0.0.1:9091/transmission/rpc"),
+		TransmissionUser:      env("TRANSMISSION_USER", ""),
+		TransmissionPassword:  env("TRANSMISSION_PASSWORD", ""),
+		QBittorrentURL:        env("QBITTORRENT_URL", "http://127.0.0.1:8080"),
+		QBittorrentUser:       env("QBITTORRENT_USER", "admin"),
+		QBittorrentPassword:   env("QBITTORRENT_PASSWORD", ""),
+		OpenListBaseURL:       env("OPENLIST_BASE_URL", ""),
+		OpenListAuthToken:     env("OPENLIST_AUTH_TOKEN", ""),
+		OpenListDestDir:       env("OPENLIST_DEST_DIR", ""),
+		OpenListTargetProfile: env("OPENLIST_TARGET_PROFILE", "openlist_default"),
 		// Empty means API-only acquisition: MediaDock does not need a local
 		// media volume and lets the downloader choose its own remote path.
 		IncomingDir:   env("DOWNLOAD_INCOMING_DIR", ""),

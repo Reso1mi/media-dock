@@ -13,13 +13,14 @@ MediaDock 通过内部 Docker 网络访问这些组件，不需要把它们的�
 
 ## 组件和端口
 
-| 服务                | 容器内地址                | 宿主机地址              | 用途                    |
-| ------------------- | ------------------------- | ----------------------- | ----------------------- |
-| MediaDock           | `http://media-dock:8080`  | `http://127.0.0.1:8080` | WebUI、REST、MCP        |
-| PanSou              | `http://pansou:8888`      | `http://127.0.0.1:8888` | 网盘资源搜索 API        |
-| Prowlarr            | `http://prowlarr:9696`    | `http://127.0.0.1:9696` | 索引器管理和搜索        |
-| qBittorrent         | `http://qbittorrent:8080` | `http://127.0.0.1:8081` | WebUI 和下载 API        |
-| qBittorrent torrent | `6881/tcp+udp`            | `6881/tcp+udp`          | DHT/peer 流量，可选映射 |
+| 服务                | 容器内地址                     | 宿主机地址              | 用途                     |
+| ------------------- | ------------------------------ | ----------------------- | ------------------------ |
+| MediaDock           | `http://media-dock:8080`       | `http://127.0.0.1:8080` | WebUI、REST、MCP         |
+| PanSou              | `http://pansou:8888`           | `http://127.0.0.1:8888` | 网盘资源搜索 API         |
+| Prowlarr            | `http://prowlarr:9696`         | `http://127.0.0.1:9696` | 索引器管理和搜索         |
+| qBittorrent         | `http://qbittorrent:8080`      | `http://127.0.0.1:8081` | WebUI 和下载 API         |
+| OpenList fork       | 外部配置的 `OPENLIST_BASE_URL` | 外部部署                | transfer / COPY HTTP API |
+| qBittorrent torrent | `6881/tcp+udp`                 | `6881/tcp+udp`          | DHT/peer 流量，可选映射  |
 
 当前 qBittorrent 适配器只接收可解析 info hash 的磁力链接。普通 `.torrent` URL 不会被宣称为可获取，这是为了保证任务重启后可对账、且不会误取消外部任务。
 
@@ -160,7 +161,7 @@ PANSOU_BASE_URL=http://pansou:8888
 
 当前完整 Compose 的 `AUTH_ENABLED=false` 是有意设置的兼容选项：MediaDock 直接调用 PanSou `/api/search`，尚未执行 PanSou JWT 登录。请保持 PanSou 端口只绑定到本机，除非先为适配器补上认证支持。
 
-PanSou 的网盘候选目前可以搜索和展示，但 qBittorrent 不会获取 `cloud_share` 类型候选。要获取这类网盘资源，需要未来单独接入网盘转存/下载适配器。MediaDock WebUI 会在每条候选的“原始搜索结果”区域显示原始分享链接和分享密码，供已认证的人工用户复制或打开；MCP 和普通搜索响应仍保持脱敏。
+PanSou 的网盘候选可以搜索和展示，但 qBittorrent 不会获取 `cloud_share` 类型候选。配置独立的 OpenList fork 并将 `openlist` 加入 `DOWNLOADERS` 后，`media_acquire` 会调用 OpenList 的 `/api/fs/transfer`，而已确认的 OpenList 文件可以通过 `media_copy` / `POST /api/v1/copies` 调用 `/api/fs/copy`。请求中的 `target_dir`、`source_path` 和覆盖策略必须由用户确认；OpenList 负责权限和实际数据流。MediaDock WebUI 会在每条候选的“原始搜索结果”区域显示原始分享链接和分享密码，供已认证的人工用户复制或打开；MCP 和普通搜索响应仍保持脱敏。完整协议见 [`../docs/openlist-mediadock-protocol.md`](../docs/openlist-mediadock-protocol.md)。
 
 ## 6. 使用 MediaDock WebUI
 
