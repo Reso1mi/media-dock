@@ -1,18 +1,39 @@
 ARG GO_BUILD_IMAGE=golang:1.27.1
+ARG GOPROXY=https://proxy.golang.org,direct
 FROM ${GO_BUILD_IMAGE} AS build
+ARG GOPROXY
 WORKDIR /src
-ENV GODEBUG=http2client=0
+ENV GODEBUG=http2client=0 GOMAXPROCS=2 GOGC=40 GOPROXY=${GOPROXY}
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG OPENLIST_COMMIT=unknown
-ARG OPENLIST_WEB_VERSION=unknown
-RUN CGO_ENABLED=0 go build -p 4 -trimpath -tags=jsoniter \
+ARG OPENLIST_WEB_VERSION=4.2.6
+ARG OPENLIST_BUILD_PARALLELISM=1
+RUN curl -fsSL --retry 3 \
+    "https://github.com/OpenListTeam/OpenList-Frontend/releases/download/v${OPENLIST_WEB_VERSION}/openlist-frontend-dist-v${OPENLIST_WEB_VERSION}.tar.gz" \
+    -o /tmp/openlist-frontend.tar.gz \
+    && mkdir -p public/dist \
+    && tar -xzf /tmp/openlist-frontend.tar.gz -C public/dist \
+    && test -s public/dist/index.html \
+    && rm /tmp/openlist-frontend.tar.gz
+RUN CGO_ENABLED=0 go build -p ${OPENLIST_BUILD_PARALLELISM} -trimpath -tags=jsoniter \
     -ldflags="-s -w -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=integration -X github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=${OPENLIST_COMMIT} -X github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=${OPENLIST_WEB_VERSION}" \
     -o /out/openlist .
-FROM gcr.io/distroless/static-debian12:nonroot
+RUN test -s /etc/ssl/certs/ca-certificates.crt \
+    && test -f /usr/share/zoneinfo/Asia/Shanghai \
+    && mkdir -p /out/rootfs/etc/ssl/certs /out/rootfs/usr/share/zoneinfo /out/rootfs/opt/openlist /out/rootfs/tmp \
+    && cp /etc/ssl/certs/ca-certificates.crt /out/rootfs/etc/ssl/certs/ca-certificates.crt \
+    && cp -a /usr/share/zoneinfo/. /out/rootfs/usr/share/zoneinfo/ \
+    && printf 'openlist:x:1000:1000:OpenList:/opt/openlist:/sbin/nologin\n' > /out/rootfs/etc/passwd \
+    && printf 'openlist:x:1000:\n' > /out/rootfs/etc/group \
+    && chmod 1777 /out/rootfs/tmp
+FROM scratch
+ENV TZ=Asia/Shanghai
 WORKDIR /opt/openlist
 COPY --from=build /out/openlist /opt/openlist/openlist
+COPY --from=build /out/rootfs /
+USER 1000:1000
 EXPOSE 5244
 ENTRYPOINT ["/opt/openlist/openlist"]
-CMD ["server", "--data", "/opt/openlist/data"]
+CMD ["server", "--data", "/opt/openlist/data", "--log-std"]

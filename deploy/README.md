@@ -246,3 +246,112 @@ data/downloads/    qBittorrent 下载内容
 ```
 
 不要在没有备份的情况下删除 `data/`。Compose 中使用了 `latest` 标签，生产部署建议在验证后固定镜像版本或 digest。
+
+## 9. 服务器完整部署：MediaDock + PanSou + Prowlarr + qBittorrent + OpenList Fork
+
+`docker-compose.server.yml` 部署完整媒体链路：PanSou 和 Prowlarr 提供搜索；MediaDock 负责候选、任务及状态；qBittorrent 获取磁力链接；Reso1mi/OpenList Fork 负责分享转存及 OpenList 文件 COPY。Prowlarr 不需要配置 qBittorrent 下载客户端：MediaDock 会直接向 qBittorrent 提交磁力链接。
+
+OpenList Fork 固定在 `05408c0d6d1f4419d3dc895e738613e939702ad3`，前端固定为 `v4.2.6`；Prowlarr 镜像版本为 `2.6.5.5623-ls162`，qBittorrent 为 `5.2.3_v2.0.14-ls477`，二者均固定镜像 digest。Web 管理端口均绑定服务器回环地址，PanSou 不映射到宿主机。qBittorrent peer 端口默认映射到所有网卡，以便接受 BT 入站连接。
+
+| 服务              | SSH 隧道后的地址                    | 用途                            |
+| ----------------- | ----------------------------------- | ------------------------------- |
+| MediaDock         | `http://127.0.0.1:8080`             | WebUI、REST、MCP                |
+| OpenList          | `http://127.0.0.1:5244`             | 网盘管理及 OpenList API         |
+| Prowlarr          | `http://127.0.0.1:9696`             | 索引器管理与搜索                |
+| qBittorrent       | `http://127.0.0.1:8081`             | 磁力下载管理                    |
+| PanSou            | 仅 Docker 内部 `http://pansou:8888` | 网盘搜索 API                    |
+| qBittorrent peers | 服务器 `6881/tcp+udp`               | BT peer 流量，不是 Web 管理端口 |
+
+### 首次部署
+
+以下命令在服务器项目仓库根目录执行。若 `deploy/mediadock.server.env` 已存在，**不要覆盖它**；将示例中的新增键合并进去并保留现有 API token。`cp -n` 在目标文件已存在时不会替换它。
+
+```sh
+# Only on a fresh deployment; keep the checkout pinned to the tested Fork commit.
+git clone https://github.com/Reso1mi/OpenList.git data/server/openlist-src
+git -C data/server/openlist-src checkout --detach 05408c0d6d1f4419d3dc895e738613e939702ad3
+cp deploy/Dockerfile.openlist-integration data/server/openlist-src/Dockerfile.openlist-integration
+
+mkdir -p data/server/openlist data/server/openlist-downloads \
+  data/server/pansou-cache data/server/mediadock data/server/prowlarr \
+  data/server/qbittorrent data/server/downloads
+chown -R 1000:1000 data/server/openlist data/server/openlist-downloads \
+  data/server/pansou-cache data/server/mediadock data/server/prowlarr \
+  data/server/qbittorrent data/server/downloads
+cp -n deploy/mediadock.server.env.example deploy/mediadock.server.env
+chmod 600 deploy/mediadock.server.env
+```
+
+编辑 `deploy/mediadock.server.env`，确认 PUID/PGID、端口和时区；首次配置时保留空的 `PROWLARR_API_KEY`、`QBITTORRENT_PASSWORD` 和 `OPENLIST_AUTH_TOKEN`，待各服务初始化后再填入真实值。然后验证并启动：
+
+```sh
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml config --quiet
+
+# Use a Go module proxy reachable from the server if proxy.golang.org is blocked.
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml pull pansou prowlarr qbittorrent
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml build \
+  --build-arg GOPROXY=https://goproxy.cn,direct openlist
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml build \
+  --build-arg GO_BUILD_IMAGE=golang:1.27.1 \
+  --build-arg GOPROXY=https://goproxy.cn,direct media-dock
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml up -d
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml ps
+```
+
+MediaDock and OpenList runtime images use `scratch`; CA certificates, timezone data, and non-root identities are copied from their Go builders. The OpenList build fetches the matching `OpenList-Frontend` release into `public/dist` before compiling, because the backend embeds those files. `--log-std` keeps OpenList in the foreground. The `GOPROXY` build argument affects only Go module downloads and can be changed to a proxy reachable from the server; `GO_BUILD_IMAGE` can select a compatible cached Go builder.
+
+### 安全访问与初始化
+
+另开一个本地终端建立 SSH 隧道：
+
+```sh
+ssh -N \
+  -L 5244:127.0.0.1:5244 \
+  -L 8080:127.0.0.1:8080 \
+  -L 9696:127.0.0.1:9696 \
+  -L 8081:127.0.0.1:8081 \
+  root@<server-ip>
+```
+
+1. **qBittorrent**：打开 `http://127.0.0.1:8081`。LinuxServer 镜像首次启动会生成临时 WebUI 密码；在服务器本地运行下面的日志命令获取它，**不要把日志或密码贴到聊天中**。登录后设置专用密码，再把用户名和密码写入 `deploy/mediadock.server.env` 的 `QBITTORRENT_USER` / `QBITTORRENT_PASSWORD`。下载目录应使用容器路径，例如 `/downloads/Movies`；它对应宿主机 `data/server/downloads/Movies`。
+
+   ```sh
+   docker compose --env-file deploy/mediadock.server.env \
+     -f deploy/docker-compose.server.yml logs qbittorrent
+   ```
+
+2. **Prowlarr**：打开 `http://127.0.0.1:9696`，完成初始化，在 `Settings -> General` 获取 API Key，并至少添加、测试一个 indexer。把 key 写入 `PROWLARR_API_KEY`。Prowlarr 只负责搜索，MediaDock 直接调用 qBittorrent，因此无需在 Prowlarr 中配置下载客户端。
+3. **OpenList**：打开 `http://127.0.0.1:5244`，完成初始化并配置网盘存储。创建权限受限的 API token，将原始 `Authorization` 值（不加 `Bearer ` 前缀）写入 `OPENLIST_AUTH_TOKEN`。分享转存使用 `media_acquire`；已确认文件通过 `media_copy` 调用 Fork 的 `/api/fs/copy`。
+4. **MediaDock**：设置好上述凭据后，在服务器重新创建 MediaDock，让它读取新配置：
+
+```sh
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml \
+  up -d --force-recreate --no-deps media-dock
+```
+
+MediaDock 首次启动会在 `data/server/mediadock/auth-token` 生成访问 token；只在自己的终端读取，不要将 token 或 OpenList/qBittorrent/Prowlarr 凭据提交到 Git 或贴入聊天。初次验证可执行 `curl http://127.0.0.1:8080/healthz`。Prowlarr/qBittorrent/OpenList WebUI 和 API 管理端口不要直接暴露公网。BT `6881/tcp+udp` 是唯一默认映射到所有网卡的端口；若要接受入站 peer，需在云防火墙/主机防火墙放行；不需要入站连接时可移除 Compose 中两条 peer 端口映射。
+
+### 更新与停止
+
+```sh
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml pull pansou prowlarr qbittorrent
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml up -d
+```
+
+停止服务但保留绑定挂载的数据：
+
+```sh
+docker compose --env-file deploy/mediadock.server.env \
+  -f deploy/docker-compose.server.yml down
+```
+
+持久数据位于 `data/server/`：OpenList、Prowlarr、qBittorrent 配置，MediaDock SQLite/token、PanSou 缓存和 qBittorrent 下载文件。清理或迁移前先备份该目录。

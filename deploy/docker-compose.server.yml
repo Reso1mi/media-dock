@@ -1,0 +1,88 @@
+name: media-dock-server
+
+services:
+  openlist:
+    image: mediadock/openlist:05408c0d
+    build:
+      context: ../data/server/openlist-src
+      dockerfile: Dockerfile.openlist-integration
+      args:
+        OPENLIST_COMMIT: 05408c0d6d1f4419d3dc895e738613e939702ad3
+        OPENLIST_WEB_VERSION: "4.2.6"
+    user: "1000:1000"
+    command: ["server", "--data", "/opt/openlist/data", "--log-std"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OPENLIST_HTTP_PORT:-5244}:5244"
+    volumes:
+      - ../data/server/openlist:/opt/openlist/data
+      - ../data/server/openlist-downloads:/downloads
+
+  pansou:
+    image: ghcr.io/fish2018/pansou@sha256:1976f4a69a12d37a4d90dd4418ad1f6cd3d6b296e1629f44e57b84378606c4cc
+    restart: unless-stopped
+    environment:
+      PORT: "8888"
+      AUTH_ENABLED: "false"
+      CACHE_ENABLED: "true"
+      CACHE_PATH: /app/cache
+      ASYNC_PLUGIN_ENABLED: "true"
+      TZ: Asia/Shanghai
+    volumes:
+      - ../data/server/pansou-cache:/app/cache
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr@sha256:f2b26429893d4c4cb71941b7ee50b1bdecd9d5f9f9e02d5410615e9f4f7c8d95
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PROWLARR_HTTP_PORT:-9696}:9696"
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Asia/Shanghai}"
+    volumes:
+      - ../data/server/prowlarr:/config
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent@sha256:457e4eec2ee3f5e4ef59f237ad51f6143deba9f7445ab48bb5204a98888ef9aa
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${QBITTORRENT_HTTP_PORT:-8081}:8080"
+      - "${QBITTORRENT_TORRENT_PORT:-6881}:${QBITTORRENT_TORRENT_PORT:-6881}/tcp"
+      - "${QBITTORRENT_TORRENT_PORT:-6881}:${QBITTORRENT_TORRENT_PORT:-6881}/udp"
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Asia/Shanghai}"
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "${QBITTORRENT_TORRENT_PORT:-6881}"
+    volumes:
+      - ../data/server/qbittorrent:/config
+      - ../data/server/downloads:/downloads
+      - ./qbittorrent-init:/custom-cont-init.d:ro
+
+  media-dock:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    user: "1000:1000"
+    restart: unless-stopped
+    depends_on:
+      - openlist
+      - pansou
+      - prowlarr
+      - qbittorrent
+    ports:
+      - "127.0.0.1:${MEDIADOCK_HTTP_PORT:-8080}:8080"
+    env_file:
+      - ./mediadock.server.env
+    environment:
+      HTTP_ADDR: ":8080"
+      STORAGE_SQLITE_PATH: /config/mediadock.db
+      AUTH_TOKEN_FILE: /config/auth-token
+      PANSOU_BASE_URL: http://pansou:8888
+      PROWLARR_BASE_URL: http://prowlarr:9696
+      QBITTORRENT_URL: http://qbittorrent:8080
+      OPENLIST_BASE_URL: http://openlist:5244
+    volumes:
+      - ../data/server/mediadock:/config
